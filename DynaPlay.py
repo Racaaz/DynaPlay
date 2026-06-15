@@ -1,9 +1,10 @@
 import json
 import os
+import shutil
 import random
 import sys
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import messagebox, ttk, filedialog
 
 # Inisialisasi Pygame Mixer untuk Audio Realistis
 try:
@@ -18,10 +19,8 @@ except ImportError:
 
 class Node:
     def __init__(self, song_id, judul, artis, durasi, genre):
-        # Otomatis bersihkan nama ID agar selalu berakhiran single '.mp3'
         clean_id = song_id.strip()
         if clean_id.lower().endswith(".mp3"):
-            # Jika user mengetik .mp3.mp3 secara tidak sengaja, kita bersihkan
             while clean_id.lower().endswith(".mp3.mp3"):
                 clean_id = clean_id[:-4]
         else:
@@ -98,7 +97,6 @@ class DoublyLinkedList:
         if not self.head:
             return False
 
-        # Cek keselarasan ekstensi untuk penghapusan aman
         target_id = song_id.strip()
         if not target_id.lower().endswith(".mp3"):
             target_id += ".mp3"
@@ -133,10 +131,15 @@ class DoublyLinkedList:
     def next_song(self, repeat_mode=False):
         if not self.current:
             return None
+        
+        # PERBAIKAN LOGIKA: Jika repeat mode aktif, current TETAP di lagu yang sama
+        if repeat_mode:
+            return self.current
+            
         if self.current.next:
             self.current = self.current.next
-        elif repeat_mode:
-            self.current = self.head
+        else:
+            self.current = self.head # Loop balik ke awal playlist jika ujung habis
         return self.current
 
     def prev_song(self):
@@ -153,7 +156,7 @@ class DoublyLinkedList:
 
 class AudioEngine:
     FOLDER = "music"
-    is_paused = False  # State Tracker Fitur Jeda
+    is_paused = False  
 
     @staticmethod
     def play(node):
@@ -177,15 +180,14 @@ class AudioEngine:
 
     @staticmethod
     def toggle_pause():
-        """Mengontrol fungsi jeda (Pause / Resume) musik"""
         if 'pygame' not in sys.modules:
             return False
             
         if AudioEngine.is_paused:
-            pygame.mixer.music.unpause()  # PERBAIKAN: Menggunakan unpause(), hapus baris unshare()
+            pygame.mixer.music.unpause() # Perbaikan typo crash kemarin
             AudioEngine.is_paused = False
         else:
-            pygame.mixer.music.pause()    # Pause musik
+            pygame.mixer.music.pause() 
             AudioEngine.is_paused = True
         return AudioEngine.is_paused
 
@@ -275,15 +277,15 @@ class PlaylistCLI:
             else:
                 print(" Sedang Memutar : Tidak Ada Lagu")
             
-            print(f" Status Repeat  : {'AKTIF' if self.repeat_mode else 'MATI'}")
+            print(f" Status Repeat  : {'ONE (ULANG SATU)' if self.repeat_mode else 'MATI'}")
             print("=============================================")
             print(" 1. Lagu Berikutnya (Next)")
             print(" 2. Lagu Sebelumnya (Prev)")
             print(" 3. Pause / Resume Musik (Jeda)")
-            print(" 4. Tambah Lagu (Input Bebas Otomatis .mp3)")
+            print(" 4. Tambah Lagu (Input Manual)")
             print(" 5. Hapus Lagu (Delete via ID)")
             print(" 6. Lihat Seluruh Rantai Playlist")
-            print(" 7. Aktifkan/Matikan Repeat")
+            print(" 7. Aktifkan/Matikan Repeat One")
             print(" 8. Pindah ke Mode GUI Premium (Spotify Mode)")
             print(" 9. Keluar Aplikasi")
             print("=============================================")
@@ -291,28 +293,28 @@ class PlaylistCLI:
             pilihan = input("Pilih Menu (1-9): ").strip()
             
             if pilihan == "1":
-                if self.dll.next_song(self.repeat_mode):
+                # Jika repeat aktif, paksa ganti lagu saat tombol next ditekan manual
+                if self.repeat_mode:
+                    self.dll.current = self.dll.current.next if self.dll.current.next else self.dll.head
                     AudioEngine.play(self.dll.current)
-                else:
-                    print("\n[Pemberitahuan: Sudah mencapai ujung akhir playlist]")
-                    input("Tekan Enter...")
+                elif self.dll.next_song(self.repeat_mode):
+                    AudioEngine.play(self.dll.current)
+                self.tampilkan_playlist()
+                
             elif pilihan == "2":
                 if self.dll.prev_song():
                     AudioEngine.play(self.dll.current)
-                else:
-                    print("\n[Pemberitahuan: Sudah mencapai ujung awal playlist]")
-                    input("Tekan Enter...")
+                self.tampilkan_playlist()
+                
             elif pilihan == "3":
                 if self.dll.current:
                     AudioEngine.toggle_pause()
-                else:
-                    print("\nTidak ada lagu aktif untuk di-pause.")
-                    input("Tekan Enter...")
+                
             elif pilihan == "4":
                 print("\n--- Tambah Lagu ---")
                 try:
                     posisi = int(input(f"Masukkan Posisi Sisip (1 - {self.dll.size + 1}): "))
-                    song_id = input("Masukkan Nama File/ID (Bebas cth: 'shape'): ")
+                    song_id = input("Masukkan Nama File (cth: 'lagu.mp3'): ")
                     judul = input("Masukkan Judul Lagu: ")
                     artis = input("Masukkan Nama Artis: ")
                     durasi = int(input("Masukkan Durasi (dalam hitungan detik): "))
@@ -321,14 +323,15 @@ class PlaylistCLI:
                     baru = Node(song_id, judul, artis, durasi, genre)
                     if self.dll.insert_at(posisi, baru):
                         DataManager.save_playlist(self.dll)
-                        print(f"\n[Sukses] Lagu Berhasil Disisipkan dengan ID Sistem: {baru.id}!")
+                        print(f"\n[Sukses] Lagu Berhasil Disisipkan!")
                         if self.dll.size == 1:
                             AudioEngine.play(self.dll.current)
                     else:
                         print("\n[Gagal] Batasan posisi di luar jangkauan!")
                 except ValueError:
-                    print("\n[Gagal] Posisi/Durasi harus diisi angka integer!")
+                    print("\n[Gagal] Masukan salah!")
                 input("Tekan Enter...")
+                
             elif pilihan == "5":
                 print("\n--- Hapus Lagu ---")
                 song_id = input("Masukkan ID Lagu yang ingin dibuang: ")
@@ -341,6 +344,7 @@ class PlaylistCLI:
                 else:
                     print("\n[Gagal] ID Lagu tidak ditemukan!")
                 input("Tekan Enter...")
+                
             elif pilihan == "6":
                 self.tampilkan_playlist()
                 input("\nTekan Enter untuk kembali ke menu...")
@@ -353,9 +357,6 @@ class PlaylistCLI:
                 AudioEngine.stop()
                 print("\nTerima kasih telah menggunakan DynaPlay!")
                 sys.exit()
-            else:
-                print("\nPilihan menu salah!")
-                input("Tekan Enter...")
 
 
 # ==========================================
@@ -449,7 +450,6 @@ class PlaylistGUI:
         self.btn_prev = tk.Button(self.buttons_row, text="⏮", font=("Helvetica", 14), bg=self.color_surface, fg=self.color_text_muted, activebackground=self.color_surface, activeforeground=self.color_text, bd=0, command=self.action_prev, cursor="hand2")
         self.btn_prev.pack(side="left", padx=15)
 
-        # FITUR UTAMA BARU: Tombol Play/Pause Bulat Hijau Spotify
         self.btn_pause = tk.Button(self.buttons_row, text="⏸", font=("Helvetica", 14, "bold"), bg=self.color_text, fg="black", activebackground=self.color_spotify, activeforeground="black", bd=0, width=3, height=1, relief="flat", command=self.action_pause, cursor="hand2")
         self.btn_pause.pack(side="left", padx=15)
 
@@ -488,7 +488,6 @@ class PlaylistGUI:
             self.lbl_time_max.config(text=self.format_durasi(curr.durasi))
             self.anim_running = not AudioEngine.is_paused
             
-            # Ubah ikon tombol sesuai state putar/jeda
             if AudioEngine.is_paused:
                 self.btn_pause.config(text="▶")
             else:
@@ -516,7 +515,11 @@ class PlaylistGUI:
         self.tree.tag_configure("normal", background=self.color_surface, foreground=self.color_text)
 
     def action_next(self):
-        if self.dll.next_song(self.repeat_mode):
+        # Jika tombol next manual diklik saat repeat on, paksa geser node pointer
+        if self.repeat_mode and self.dll.current:
+            self.dll.current = self.dll.current.next if self.dll.current.next else self.dll.head
+            AudioEngine.play(self.dll.current)
+        elif self.dll.next_song(self.repeat_mode):
             AudioEngine.play(self.dll.current)
         self.current_progress_seconds = 0
         self.refresh_ui()
@@ -528,7 +531,6 @@ class PlaylistGUI:
         self.refresh_ui()
 
     def action_pause(self):
-        """Aksi saat tombol Play/Pause ditekan di GUI"""
         if self.dll.current:
             state_paused = AudioEngine.toggle_pause()
             self.anim_running = not state_paused
@@ -562,11 +564,11 @@ class PlaylistGUI:
     def popup_insert(self):
         win = tk.Toplevel(self.root)
         win.title("Insert Node Baru")
-        win.geometry("340x290")
+        win.geometry("380x330")
         win.configure(bg=self.color_surface)
         win.resizable(False, False)
         
-        labels = ["Posisi (1-Indexed):", "ID / Nama File (Bebas):", "Judul:", "Artis:", "Durasi (Detik):", "Genre:"]
+        labels = ["Posisi (1-Indexed):", "ID / File Audio:", "Judul Lagu:", "Nama Artis:", "Durasi (Detik):", "Genre Musik:"]
         entries = []
         
         for i, text in enumerate(labels):
@@ -577,15 +579,53 @@ class PlaylistGUI:
             
         entries[0].insert(0, str(self.dll.size + 1))
         
+# FITUR PERBAIKAN: Membaca Durasi Asli MP3 Menggunakan Pygame Audio
+        def browse_file():
+            file_selected = filedialog.askopenfilename(filetypes=[("Audio Files", "*.mp3")])
+            if file_selected:
+                filename = os.path.basename(file_selected)
+                
+                # 1. Auto-fill data nama file ke kolom ID
+                entries[1].delete(0, tk.END)
+                entries[1].insert(0, filename)
+                
+                # 2. Auto-fill nama file ke Judul sebagai saran awal
+                entries[2].delete(0, tk.END)
+                entries[2].insert(0, filename.replace(".mp3", "").replace(".MP3", ""))
+                
+                # 3. Proses Copy File Fisik secara otomatis ke folder 'music'
+                if not os.path.exists(AudioEngine.FOLDER):
+                    os.makedirs(AudioEngine.FOLDER)
+                dest_path = os.path.join(AudioEngine.FOLDER, filename)
+                try:
+                    shutil.copy(file_selected, dest_path)
+                    
+                    # 4. HITUNG DURASI ASLI FILE MP3 MENGGUNAKAN PYGAME
+                    if 'pygame' in sys.modules:
+                        # Muat sebentar ke sound objek untuk dibaca panjangnya
+                        suara_temp = pygame.mixer.Sound(dest_path)
+                        durasi_detik = int(suara_temp.get_length())
+                        
+                        # Masukkan durasi asli ke kolom input secara otomatis
+                        entries[4].delete(0, tk.END)
+                        entries[4].insert(0, str(durasi_detik))
+                except Exception as e:
+                    print(f"Gagal memproses file audio: {e}")
+                    # Jika gagal membaca, berikan durasi standar cadangan
+                    entries[4].delete(0, tk.END)
+                    entries[4].insert(0, "210")
+
+        btn_browse = tk.Button(win, text="📁 Browse", font=("Helvetica", 8, "bold"), bg=self.color_card, fg=self.color_spotify, bd=0, command=browse_file)
+        btn_browse.grid(row=1, column=2, padx=5)
+
         def simpan():
             try:
                 pos = int(entries[0].get())
                 song_id = entries[1].get().strip()
                 if not song_id:
-                    messagebox.showerror("Error", "ID lagu tidak boleh kosong!")
+                    messagebox.showerror("Error", "ID/Nama file tidak boleh kosong!")
                     return
                 
-                # Inisialisasi node (pembersihan akhiran ganda dilakukan otomatis di konstruktor Node)
                 node = Node(song_id, entries[2].get(), entries[3].get(), int(entries[4].get()), entries[5].get())
                 if self.dll.insert_at(pos, node):
                     DataManager.save_playlist(self.dll)
@@ -596,28 +636,31 @@ class PlaylistGUI:
                 else:
                     messagebox.showerror("Error", "Gagal menyisipkan data. Periksa nomor posisi!")
             except ValueError:
-                messagebox.showerror("Error", "Input Posisi dan Durasi wajib diisi angka bulat!")
+                messagebox.showerror("Error", "Input Posisi dan Durasi wajib angka bulat!")
                 
-        tk.Button(win, text="Simpan ke DLL", font=("Helvetica", 10, "bold"), bg=self.color_spotify, fg="black", bd=0, relief="flat", cursor="hand2", padx=10, pady=5, command=simpan).grid(row=6, columnspan=2, pady=15)
+        tk.Button(win, text="Simpan ke DLL", font=("Helvetica", 10, "bold"), bg=self.color_spotify, fg="black", bd=0, relief="flat", cursor="hand2", padx=10, pady=5, command=simpan).grid(row=6, columnspan=3, pady=20)
 
     def start_animation_loop(self):
-        """Looping jalannya hitungan detik progres musik dan animasi gelombang visualizer"""
         if self.anim_running and self.dll.current:
             total_durasi = self.dll.current.durasi
             self.current_progress_seconds += 1
             
             if self.current_progress_seconds > total_durasi:
-                self.action_next()
+                # REPEAT ONE CHECKER LOGIC:
+                if self.repeat_mode:
+                    self.current_progress_seconds = 0
+                    AudioEngine.play(self.dll.current) # Putar ulang lagu yang sama
+                    self.refresh_ui()
+                else:
+                    self.action_next()
             else:
                 persentase = (self.current_progress_seconds / total_durasi) * 100
                 self.progress_bar['value'] = persentase
                 self.lbl_time_current.config(text=self.format_durasi(self.current_progress_seconds))
 
-                # Efek animasi grafik equalizer bergerak naik turun acak
                 bars = ["█ ▄ █ ▄ ▄", "▄ █ ▄ █ ▄", "█ █ ▄ ▄ █", "▄ ▄ █ █ ▄", "█ ▄ ▄ █ █"]
                 self.lbl_visualizer.config(text=random.choice(bars))
         elif AudioEngine.is_paused:
-            # Jika di-pause, animasi gelombang berhenti total tetapi progress bar bertahan
             self.lbl_visualizer.config(text="  ⏸ JEDA  ")
         else:
             self.progress_bar['value'] = 0

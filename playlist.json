@@ -19,5 +19,19 @@
         "artis": "Bruno Mars",
         "durasi": 266,
         "genre": "Romance"
+    },
+    {
+        "id": "0019.mp3",
+        "judul": "Confident",
+        "artis": "Justin Bieber",
+        "durasi": 210,
+        "genre": "Pop"
+    },
+    {
+        "id": "0001.mp3",
+        "judul": "One Of The Girls",
+        "artis": "The Weeknd",
+        "durasi": 258,
+        "genre": "R&B"
     }
 ]
