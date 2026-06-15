@@ -6,85 +6,94 @@ import sys
 import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
 
-# Inisialisasi Pygame Mixer untuk Audio Realistis
+# ─────────────────────────────────────────────
+#  INISIALISASI PYGAME (AUDIO ENGINE)
+# ─────────────────────────────────────────────
 try:
     import pygame
+    pygame.mixer.pre_init(44100, -16, 2, 2048)
     pygame.mixer.init()
+    PYGAME_AVAILABLE = True
 except ImportError:
+    PYGAME_AVAILABLE = False
     print("Peringatan: Library 'pygame' belum diinstal. Jalankan: pip install pygame")
 
-# ==========================================
-# 1. MODEL: NODE & DOUBLY LINKED LIST (DLL)
-# ==========================================
+
+# ══════════════════════════════════════════════
+#  1. MODEL — NODE & DOUBLY LINKED LIST
+# ══════════════════════════════════════════════
 
 class Node:
-    def __init__(self, song_id, judul, artis, durasi, genre):
-        clean_id = song_id.strip()
-        if clean_id.lower().endswith(".mp3"):
-            while clean_id.lower().endswith(".mp3.mp3"):
-                clean_id = clean_id[:-4]
-        else:
-            clean_id += ".mp3"
-            
-        self.id = clean_id  
-        self.judul = judul
-        self.artis = artis
-        self.durasi = int(durasi)  
-        self.genre = genre
-        self.prev = None
-        self.next = None
+    """Satu simpul dalam playlist (Doubly Linked List)."""
 
-    def to_dict(self):
+    def __init__(self, song_id: str, judul: str, artis: str,
+                 durasi: int, genre: str, play_count: int = 0):
+        clean_id = song_id.strip()
+        # Pastikan ekstensi .mp3 ada tepat sekali
+        while clean_id.lower().endswith(".mp3.mp3"):
+            clean_id = clean_id[:-4]
+        if not clean_id.lower().endswith(".mp3"):
+            clean_id += ".mp3"
+
+        self.id         = clean_id
+        self.judul      = judul
+        self.artis      = artis
+        self.durasi     = max(0, int(durasi))
+        self.genre      = genre
+        self.play_count = int(play_count)   # statistik putar
+        self.prev: "Node | None" = None
+        self.next: "Node | None" = None
+
+    def to_dict(self) -> dict:
         return {
-            "id": self.id,
-            "judul": self.judul,
-            "artis": self.artis,
-            "durasi": self.durasi,
-            "genre": self.genre
+            "id":         self.id,
+            "judul":      self.judul,
+            "artis":      self.artis,
+            "durasi":     self.durasi,
+            "genre":      self.genre,
+            "play_count": self.play_count,
         }
 
-class DoublyLinkedList:
-    def __init__(self):
-        self.head = None
-        self.tail = None
-        self.current = None
-        self.size = 0
 
-    def insert_tail(self, node):
+class DoublyLinkedList:
+    """Playlist berbasis Doubly Linked List dengan dukungan shuffle & pencarian."""
+
+    def __init__(self):
+        self.head:    Node | None = None
+        self.tail:    Node | None = None
+        self.current: Node | None = None
+        self.size:    int = 0
+        self._shuffle_order: list[Node] = []   # urutan shuffle sementara
+        self._shuffle_idx:   int = 0
+
+    # ── Insertion ──────────────────────────────
+    def insert_tail(self, node: Node) -> None:
         if not self.head:
-            self.head = node
-            self.tail = node
-            self.current = node
+            self.head = self.tail = self.current = node
         else:
-            self.tail.next = node
             node.prev = self.tail
+            self.tail.next = node
             self.tail = node
         self.size += 1
 
-    def insert_at(self, posisi, node):
+    def insert_at(self, posisi: int, node: Node) -> bool:
         if posisi < 1 or posisi > self.size + 1:
             return False
-
         if posisi == 1:
             if not self.head:
-                self.head = node
-                self.tail = node
-                self.current = node
+                self.head = self.tail = self.current = node
             else:
                 node.next = self.head
                 self.head.prev = node
                 self.head = node
             self.size += 1
             return True
-
         if posisi == self.size + 1:
             self.insert_tail(node)
             return True
-
         temp = self.head
         for _ in range(posisi - 2):
             temp = temp.next
-
         node.next = temp.next
         node.prev = temp
         if temp.next:
@@ -93,608 +102,964 @@ class DoublyLinkedList:
         self.size += 1
         return True
 
-    def delete_by_id(self, song_id):
-        if not self.head:
-            return False
-
-        target_id = song_id.strip()
-        if not target_id.lower().endswith(".mp3"):
-            target_id += ".mp3"
+    # ── Deletion ───────────────────────────────
+    def delete_by_id(self, song_id: str) -> bool:
+        target = song_id.strip()
+        if not target.lower().endswith(".mp3"):
+            target += ".mp3"
 
         temp = self.head
         while temp:
-            if temp.id.lower() == target_id.lower():
+            if temp.id.lower() == target.lower():
                 if temp == self.current:
-                    self.current = temp.next if temp.next else temp.prev
-
-                if temp == self.head:
-                    self.head = temp.next
-                    if self.head:
-                        self.head.prev = None
-                    else:
-                        self.tail = None
-                elif temp == self.tail:
-                    self.tail = temp.prev
-                    if self.tail:
-                        self.tail.next = None
-                    else:
-                        self.head = None
-                else:
+                    self.current = temp.next or temp.prev
+                if temp.prev:
                     temp.prev.next = temp.next
+                else:
+                    self.head = temp.next
+                if temp.next:
                     temp.next.prev = temp.prev
-
+                else:
+                    self.tail = temp.prev
                 self.size -= 1
                 return True
             temp = temp.next
         return False
 
-    def next_song(self, repeat_mode=False):
+    # ── Navigation ─────────────────────────────
+    def next_song(self, repeat_mode=False, shuffle_mode=False) -> "Node | None":
         if not self.current:
             return None
-        
-        # PERBAIKAN LOGIKA: Jika repeat mode aktif, current TETAP di lagu yang sama
         if repeat_mode:
             return self.current
-            
-        if self.current.next:
-            self.current = self.current.next
-        else:
-            self.current = self.head # Loop balik ke awal playlist jika ujung habis
+        if shuffle_mode and self._shuffle_order:
+            self._shuffle_idx = (self._shuffle_idx + 1) % len(self._shuffle_order)
+            self.current = self._shuffle_order[self._shuffle_idx]
+            return self.current
+        self.current = self.current.next or self.head
         return self.current
 
-    def prev_song(self):
+    def prev_song(self, shuffle_mode=False) -> "Node | None":
         if not self.current:
             return None
+        if shuffle_mode and self._shuffle_order:
+            self._shuffle_idx = (self._shuffle_idx - 1) % len(self._shuffle_order)
+            self.current = self._shuffle_order[self._shuffle_idx]
+            return self.current
         if self.current.prev:
             self.current = self.current.prev
         return self.current
 
+    # ── Shuffle ────────────────────────────────
+    def build_shuffle(self) -> None:
+        """Bangun urutan acak dari semua node."""
+        nodes: list[Node] = []
+        temp = self.head
+        while temp:
+            nodes.append(temp)
+            temp = temp.next
+        random.shuffle(nodes)
+        # Pastikan lagu yang sedang bermain ada di posisi pertama
+        if self.current and self.current in nodes:
+            nodes.remove(self.current)
+            nodes.insert(0, self.current)
+        self._shuffle_order = nodes
+        self._shuffle_idx   = 0
 
-# ==========================================
-# 2. CONTROLLER: AUDIO ENGINE & DATA MANAGER
-# ==========================================
+    # ── Search ─────────────────────────────────
+    def search(self, keyword: str) -> list[Node]:
+        """Cari node berdasarkan judul atau artis (case-insensitive)."""
+        kw = keyword.lower().strip()
+        results = []
+        temp = self.head
+        while temp:
+            if kw in temp.judul.lower() or kw in temp.artis.lower() or kw in temp.genre.lower():
+                results.append(temp)
+            temp = temp.next
+        return results
+
+    # ── Sort ───────────────────────────────────
+    def sort_by(self, key: str = "judul") -> None:
+        """Urutkan DLL berdasarkan key: 'judul', 'artis', 'durasi', 'genre', 'play_count'."""
+        if self.size < 2:
+            return
+        nodes: list[Node] = []
+        temp = self.head
+        while temp:
+            nodes.append(temp)
+            temp = temp.next
+        nodes.sort(key=lambda n: (getattr(n, key) or "").lower()
+                   if isinstance(getattr(n, key), str) else getattr(n, key))
+        # Susun ulang pointer
+        self.head = nodes[0]
+        self.tail = nodes[-1]
+        for i, n in enumerate(nodes):
+            n.prev = nodes[i - 1] if i > 0 else None
+            n.next = nodes[i + 1] if i < len(nodes) - 1 else None
+
+
+# ══════════════════════════════════════════════
+#  2. CONTROLLER — AUDIO ENGINE & DATA MANAGER
+# ══════════════════════════════════════════════
 
 class AudioEngine:
-    FOLDER = "music"
-    is_paused = False  
+    FOLDER    = "music"
+    is_paused = False
+    _volume   = 0.7       # 0.0 – 1.0
 
-    @staticmethod
-    def play(node):
+    @classmethod
+    def play(cls, node: Node | None) -> None:
         if not node:
             return
-        
-        if not os.path.exists(AudioEngine.FOLDER):
-            os.makedirs(AudioEngine.FOLDER)
+        os.makedirs(cls.FOLDER, exist_ok=True)
+        file_path = os.path.join(cls.FOLDER, node.id)
+        cls.is_paused = False
+        node.play_count += 1
+        if PYGAME_AVAILABLE:
+            try:
+                if os.path.exists(file_path):
+                    pygame.mixer.music.load(file_path)
+                    pygame.mixer.music.set_volume(cls._volume)
+                    pygame.mixer.music.play()
+                else:
+                    print(f"[Simulasi] File tidak ditemukan: {file_path}")
+            except Exception as e:
+                print(f"Gagal memutar: {e}")
 
-        file_path = os.path.join(AudioEngine.FOLDER, node.id)
-        AudioEngine.is_paused = False
-        
-        try:
-            if 'pygame' in sys.modules and os.path.exists(file_path):
-                pygame.mixer.music.load(file_path)
-                pygame.mixer.music.play()
-            else:
-                print(f"\n[Sistem Audio] File '{file_path}' tidak ditemukan (Simulasi Berjalan).")
-        except Exception as e:
-            print(f"\nGagal memutar audio: {e}")
-
-    @staticmethod
-    def toggle_pause():
-        if 'pygame' not in sys.modules:
-            return False
-            
-        if AudioEngine.is_paused:
-            pygame.mixer.music.unpause() # Perbaikan typo crash kemarin
-            AudioEngine.is_paused = False
+    @classmethod
+    def toggle_pause(cls) -> bool:
+        """Return True jika sekarang dalam kondisi pause."""
+        if not PYGAME_AVAILABLE:
+            return cls.is_paused
+        if cls.is_paused:
+            pygame.mixer.music.unpause()
+            cls.is_paused = False
         else:
-            pygame.mixer.music.pause() 
-            AudioEngine.is_paused = True
-        return AudioEngine.is_paused
+            pygame.mixer.music.pause()
+            cls.is_paused = True
+        return cls.is_paused
+
+    @classmethod
+    def stop(cls) -> None:
+        if PYGAME_AVAILABLE:
+            pygame.mixer.music.stop()
+        cls.is_paused = False
+
+    @classmethod
+    def set_volume(cls, vol: float) -> None:
+        cls._volume = max(0.0, min(1.0, vol))
+        if PYGAME_AVAILABLE:
+            pygame.mixer.music.set_volume(cls._volume)
+
+    @classmethod
+    def is_playing(cls) -> bool:
+        if PYGAME_AVAILABLE:
+            return pygame.mixer.music.get_busy()
+        return False
 
     @staticmethod
-    def stop():
-        if 'pygame' in sys.modules:
-            pygame.mixer.music.stop()
-        AudioEngine.is_paused = False
+    def get_duration(filepath: str) -> int:
+        """Baca durasi file MP3 (detik) menggunakan pygame."""
+        if not PYGAME_AVAILABLE:
+            return 0
+        try:
+            snd = pygame.mixer.Sound(filepath)
+            return int(snd.get_length())
+        except Exception:
+            return 0
+
 
 class DataManager:
     FILE_PATH = "playlist.json"
 
     @staticmethod
-    def load_playlist():
+    def load_playlist() -> DoublyLinkedList:
         dll = DoublyLinkedList()
         if not os.path.exists(DataManager.FILE_PATH):
             return dll
-        
         try:
             with open(DataManager.FILE_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                for item in data:
-                    node = Node(item["id"], item["judul"], item["artis"], item["durasi"], item["genre"])
-                    dll.insert_tail(node)
+            for item in data:
+                node = Node(
+                    item.get("id", ""),
+                    item.get("judul", ""),
+                    item.get("artis", ""),
+                    item.get("durasi", 0),
+                    item.get("genre", ""),
+                    item.get("play_count", 0),
+                )
+                dll.insert_tail(node)
         except Exception as e:
-            print(f"Error saat memuat data JSON: {e}")
+            print(f"Error memuat JSON: {e}")
         return dll
 
     @staticmethod
-    def save_playlist(dll):
+    def save_playlist(dll: DoublyLinkedList) -> None:
         data = []
         temp = dll.head
         while temp:
             data.append(temp.to_dict())
             temp = temp.next
-        
         try:
             with open(DataManager.FILE_PATH, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=4)
+                json.dump(data, f, indent=4, ensure_ascii=False)
         except Exception as e:
-            print(f"Error saat menyimpan ke JSON: {e}")
+            print(f"Error menyimpan JSON: {e}")
 
 
-# ==========================================
-# 3. VIEW 1: COMMAND LINE INTERFACE (CLI)
-# ==========================================
+# ══════════════════════════════════════════════
+#  3. VIEW 1 — COMMAND LINE INTERFACE (CLI)
+# ══════════════════════════════════════════════
 
 class PlaylistCLI:
-    def __init__(self, dll):
-        self.dll = dll
-        self.repeat_mode = False
+    def __init__(self, dll: DoublyLinkedList):
+        self.dll          = dll
+        self.repeat_mode  = False
+        self.shuffle_mode = False
 
-    def format_durasi(self, detik):
+    @staticmethod
+    def fmt(detik: int) -> str:
         return f"{detik // 60:02d}:{detik % 60:02d}"
 
-    def tampilkan_playlist(self):
-        print("\n=== DAFTAR PLAYLIST (TRAVERSAL DLL) ===")
+    def tampilkan_playlist(self) -> None:
+        W = 70
+        batas = "═" * W
+        print(f"\n╔{batas}╗")
+        print(f"║  DAFTAR PLAYLIST{'':<{W-17}}║")
+        print(f"╠{batas}╣")
         if self.dll.size == 0:
-            print("[Playlist Masih Kosong]")
-            return
-        
-        temp = self.dll.head
-        idx = 1
-        while temp:
-            status = "-> " if temp == self.dll.current else "   "
-            print(f"{status}{idx}. [{temp.id}] {temp.judul} - {temp.artis} ({self.format_durasi(temp.durasi)}) | Genre: {temp.genre}")
-            temp = temp.next
-            idx += 1
-        print("=======================================")
+            print(f"║  (Playlist masih kosong){'':<{W-25}}║")
+        else:
+            header = f"  {'No':<4}{'Judul':<24}{'Artis':<20}{'Durasi':^8}{'Genre'}"
+            print(f"║{header:<{W}}║")
+            print(f"╠{'─' * W}╣")
+            temp = self.dll.head
+            idx  = 1
+            while temp:
+                marker = ">" if temp == self.dll.current else " "
+                row = (f"  {marker} {idx:<3}{temp.judul[:22]:<24}"
+                       f"{temp.artis[:18]:<20}[{self.fmt(temp.durasi)}]  {temp.genre[:10]}")
+                print(f"║{row:<{W}}║")
+                temp = temp.next
+                idx += 1
+        print(f"╚{batas}╝")
 
-    def menu_utama(self):
-        if self.dll.current and not pygame.mixer.music.get_busy() and not AudioEngine.is_paused:
+    def menu_utama(self) -> str:
+        if self.dll.current:
             AudioEngine.play(self.dll.current)
 
         while True:
-            os.system('cls' if os.name == 'nt' else 'clear')
-                
-            print("=============================================")
-            print("         DYNAPLAY MUSIC PLAYER (CLI)         ")
-            print("=============================================")
-            
-            if self.dll.current:
-                curr = self.dll.current
-                print(f" Sedang Memutar : {curr.judul} - {curr.artis}")
-                print(f" File Audio     : music/{curr.id}")
-                print(f" Status Musik   : {'DIPAUSE (JEDA)' if AudioEngine.is_paused else 'BERPUTAR (PLAYING)'}")
+            os.system("cls" if os.name == "nt" else "clear")
+            curr = self.dll.current
+            W = 54
+
+            batas = "=" * W
+            print(f"+{batas}+")
+            print(f"|{'  DYNAPLAY MUSIC PLAYER':^{W}}|")
+            print(f"+{batas}+")
+            if curr:
+                print(f"|  Lagu   : {curr.judul[:W-12]:<{W-12}}|")
+                print(f"|  Artis  : {curr.artis[:W-12]:<{W-12}}|")
+                status_txt = "JEDA" if AudioEngine.is_paused else "BERMAIN"
+                print(f"|  Status : {status_txt:<{W-12}}|")
             else:
-                print(" Sedang Memutar : Tidak Ada Lagu")
-            
-            print(f" Status Repeat  : {'ONE (ULANG SATU)' if self.repeat_mode else 'MATI'}")
-            print("=============================================")
-            print(" 1. Lagu Berikutnya (Next)")
-            print(" 2. Lagu Sebelumnya (Prev)")
-            print(" 3. Pause / Resume Musik (Jeda)")
-            print(" 4. Tambah Lagu (Input Manual)")
-            print(" 5. Hapus Lagu (Delete via ID)")
-            print(" 6. Lihat Seluruh Rantai Playlist")
-            print(" 7. Aktifkan/Matikan Repeat One")
-            print(" 8. Pindah ke Mode GUI Premium (Spotify Mode)")
-            print(" 9. Keluar Aplikasi")
-            print("=============================================")
-            
-            pilihan = input("Pilih Menu (1-9): ").strip()
-            
+                print(f"|{'  Tidak ada lagu yang diputar':<{W}}|")
+
+            rep_txt = "Aktif" if self.repeat_mode  else "Mati"
+            shf_txt = "Aktif" if self.shuffle_mode else "Mati"
+            vol_bar = "#" * int(AudioEngine._volume * 10)
+            vol_pct = int(AudioEngine._volume * 100)
+            print(f"|{'-' * W}|")
+            rep_shf = f"  Repeat: {rep_txt:<8}  Shuffle: {shf_txt}"
+            print(f"|{rep_shf:<{W}}|")
+            vol_line = f"  Volume: [{vol_bar:<10}] {vol_pct:>3}%"
+            print(f"|{vol_line:<{W}}|")
+            print(f"+{batas}+")
+            menu_items = [
+                (" 1. Lagu Berikutnya",  " 6. Lihat Playlist"),
+                (" 2. Lagu Sebelumnya",  " 7. Repeat One"),
+                (" 3. Pause / Resume",   " 8. Shuffle"),
+                (" 4. Tambah Lagu",      " 9. Volume (+/-)"),
+                (" 5. Hapus Lagu",       "10. Cari Lagu"),
+                ("11. Urutkan Playlist", "12. Pindah ke GUI"),
+                ("13. Keluar", ""),
+            ]
+            for kiri, kanan in menu_items:
+                baris = f"  {kiri:<24}  {kanan}"
+                print(f"|{baris:<{W}}|")
+            print(f"+{batas}+")
+
+            pilihan = input("Pilih Menu: ").strip()
+
             if pilihan == "1":
-                # Jika repeat aktif, paksa ganti lagu saat tombol next ditekan manual
-                if self.repeat_mode:
-                    self.dll.current = self.dll.current.next if self.dll.current.next else self.dll.head
-                    AudioEngine.play(self.dll.current)
-                elif self.dll.next_song(self.repeat_mode):
-                    AudioEngine.play(self.dll.current)
-                self.tampilkan_playlist()
-                
+                self.dll.next_song(self.repeat_mode, self.shuffle_mode)
+                AudioEngine.play(self.dll.current)
+
             elif pilihan == "2":
-                if self.dll.prev_song():
-                    AudioEngine.play(self.dll.current)
-                self.tampilkan_playlist()
-                
+                self.dll.prev_song(self.shuffle_mode)
+                AudioEngine.play(self.dll.current)
+
             elif pilihan == "3":
                 if self.dll.current:
                     AudioEngine.toggle_pause()
-                
+
             elif pilihan == "4":
-                print("\n--- Tambah Lagu ---")
-                try:
-                    posisi = int(input(f"Masukkan Posisi Sisip (1 - {self.dll.size + 1}): "))
-                    song_id = input("Masukkan Nama File (cth: 'lagu.mp3'): ")
-                    judul = input("Masukkan Judul Lagu: ")
-                    artis = input("Masukkan Nama Artis: ")
-                    durasi = int(input("Masukkan Durasi (dalam hitungan detik): "))
-                    genre = input("Masukkan Genre: ")
-                    
-                    baru = Node(song_id, judul, artis, durasi, genre)
-                    if self.dll.insert_at(posisi, baru):
-                        DataManager.save_playlist(self.dll)
-                        print(f"\n[Sukses] Lagu Berhasil Disisipkan!")
-                        if self.dll.size == 1:
-                            AudioEngine.play(self.dll.current)
-                    else:
-                        print("\n[Gagal] Batasan posisi di luar jangkauan!")
-                except ValueError:
-                    print("\n[Gagal] Masukan salah!")
-                input("Tekan Enter...")
-                
+                self._cli_tambah()
+
             elif pilihan == "5":
-                print("\n--- Hapus Lagu ---")
-                song_id = input("Masukkan ID Lagu yang ingin dibuang: ")
-                current_before_delete = self.dll.current
-                if self.dll.delete_by_id(song_id):
-                    DataManager.save_playlist(self.dll)
-                    print(f"\n[Sukses] Lagu {song_id} berhasil dihapus!")
-                    if current_before_delete != self.dll.current:
-                        AudioEngine.play(self.dll.current)
-                else:
-                    print("\n[Gagal] ID Lagu tidak ditemukan!")
-                input("Tekan Enter...")
-                
+                self._cli_hapus()
+
             elif pilihan == "6":
                 self.tampilkan_playlist()
-                input("\nTekan Enter untuk kembali ke menu...")
+                input("Tekan Enter...")
+
             elif pilihan == "7":
                 self.repeat_mode = not self.repeat_mode
+
             elif pilihan == "8":
-                print("\nBeralih ke mode GUI...")
-                return "GUI"
+                self.shuffle_mode = not self.shuffle_mode
+                if self.shuffle_mode:
+                    self.dll.build_shuffle()
+
             elif pilihan == "9":
+                self._cli_volume()
+
+            elif pilihan == "10":
+                self._cli_cari()
+
+            elif pilihan == "11":
+                self._cli_sort()
+
+            elif pilihan == "12":
+                return "GUI"
+
+            elif pilihan == "13":
                 AudioEngine.stop()
-                print("\nTerima kasih telah menggunakan DynaPlay!")
+                DataManager.save_playlist(self.dll)
+                print("\nTerima kasih telah menggunakan DynaPlay! 🎵")
                 sys.exit()
 
+    def _cli_tambah(self) -> None:
+        print("\n── Tambah Lagu ──────────────────")
+        try:
+            pos    = int(input(f"Posisi sisip (1–{self.dll.size + 1}): "))
+            sid    = input("Nama file (misal: lagu.mp3): ")
+            judul  = input("Judul lagu: ")
+            artis  = input("Nama artis: ")
+            durasi = int(input("Durasi (detik): "))
+            genre  = input("Genre: ")
+            node   = Node(sid, judul, artis, durasi, genre)
+            if self.dll.insert_at(pos, node):
+                DataManager.save_playlist(self.dll)
+                print("[✓] Lagu berhasil ditambahkan!")
+                if self.dll.size == 1:
+                    AudioEngine.play(self.dll.current)
+            else:
+                print("[✗] Posisi di luar jangkauan!")
+        except ValueError:
+            print("[✗] Input tidak valid!")
+        input("Tekan Enter...")
 
-# ==========================================
-# 4. VIEW 2: GRAPHICAL USER INTERFACE (GUI)
-# ==========================================
+    def _cli_hapus(self) -> None:
+        print("\n── Hapus Lagu ───────────────────")
+        sid = input("ID/Nama file lagu: ")
+        prev_curr = self.dll.current
+        if self.dll.delete_by_id(sid):
+            DataManager.save_playlist(self.dll)
+            print("[✓] Lagu berhasil dihapus!")
+            if prev_curr != self.dll.current:
+                AudioEngine.play(self.dll.current)
+        else:
+            print("[✗] ID tidak ditemukan!")
+        input("Tekan Enter...")
+
+    def _cli_volume(self) -> None:
+        try:
+            vol = float(input(f"Volume saat ini {int(AudioEngine._volume*100)}%. Masukkan nilai baru (0–100): "))
+            AudioEngine.set_volume(vol / 100)
+        except ValueError:
+            print("[✗] Input tidak valid!")
+        input("Tekan Enter...")
+
+    def _cli_cari(self) -> None:
+        kw      = input("Kata kunci pencarian: ")
+        results = self.dll.search(kw)
+        if results:
+            print(f"\nDitemukan {len(results)} lagu:")
+            for i, n in enumerate(results, 1):
+                print(f"  {i}. {n.judul} – {n.artis} [{self.fmt(n.durasi)}]")
+        else:
+            print("Tidak ada lagu yang cocok.")
+        input("Tekan Enter...")
+
+    def _cli_sort(self) -> None:
+        print("Urutkan berdasarkan: 1.Judul  2.Artis  3.Durasi  4.Genre  5.Sering Diputar")
+        pilihan = input("Pilih (1–5): ").strip()
+        keys    = {"1": "judul", "2": "artis", "3": "durasi", "4": "genre", "5": "play_count"}
+        if pilihan in keys:
+            self.dll.sort_by(keys[pilihan])
+            DataManager.save_playlist(self.dll)
+            print("[✓] Playlist berhasil diurutkan!")
+        else:
+            print("[✗] Pilihan tidak valid!")
+        input("Tekan Enter...")
+
+
+# ══════════════════════════════════════════════
+#  4. VIEW 2 — GRAPHICAL USER INTERFACE (GUI)
+# ══════════════════════════════════════════════
+
+# Palet warna DynaPlay (Spotify-inspired dark mode)
+C = {
+    "bg":      "#0D0D0D",
+    "surface": "#181818",
+    "card":    "#242424",
+    "hover":   "#2A2A2A",
+    "accent":  "#1DB954",
+    "accent2": "#1ED760",
+    "danger":  "#E22134",
+    "warn":    "#F59B23",
+    "text":    "#FFFFFF",
+    "muted":   "#B3B3B3",
+    "dim":     "#535353",
+}
+
+VISUALIZER_FRAMES = [
+    "▁▂▃▄▅▆▇█▇▆▅▄▃▂▁",
+    "▂▃▄▅▆▇█▇▆▅▄▃▂▁▂",
+    "▄▅▆▇█▇▆▅▄▃▂▁▂▃▄",
+    "▆▇█▇▆▅▄▃▂▁▂▃▄▅▆",
+    "█▇▆▅▄▃▂▁▂▃▄▅▆▇█",
+    "▇▆▅▄▃▂▁▂▃▄▅▆▇█▇",
+]
+
 
 class PlaylistGUI:
-    def __init__(self, root, dll):
-        self.root = root
-        self.dll = dll
-        self.repeat_mode = False
-        
-        self.current_progress_seconds = 0
-        self.anim_running = False
-        self.after_id = None 
+    def __init__(self, root: tk.Tk, dll: DoublyLinkedList):
+        self.root         = root
+        self.dll          = dll
+        self.repeat_mode  = False
+        self.shuffle_mode = False
+        self._prog_secs   = 0
+        self._anim_run    = False
+        self._after_id    = None
+        self._vis_idx     = 0
+        self._search_var  = tk.StringVar()
 
-        self.root.title("Spotify Style - DynaPlay Premium")
-        self.root.geometry("850x550")
-        self.root.configure(bg="#121212")
+        self._setup_window()
+        self._build_ui()
+        self._refresh_ui()
 
-        self.color_bg = "#121212"
-        self.color_surface = "#181818"
-        self.color_card = "#282828"
-        self.color_spotify = "#1DB954"     
-        self.color_text = "#FFFFFF"
-        self.color_text_muted = "#AAAAAA"
+        if self.dll.current:
+            AudioEngine.play(self.dll.current)
+            self._anim_run = True
+
+        self._tick()
+
+    # ── Window Setup ───────────────────────────
+    def _setup_window(self) -> None:
+        self.root.title("DynaPlay — Premium Music Player")
+        self.root.geometry("950x620")
+        self.root.minsize(780, 520)
+        self.root.configure(bg=C["bg"])
+        try:
+            self.root.iconbitmap("")        # kosong = default
+        except Exception:
+            pass
 
         style = ttk.Style()
         style.theme_use("default")
-        style.configure("Treeview", background=self.color_surface, foreground=self.color_text, rowheight=32, fieldbackground=self.color_surface, borderwidth=0, font=("Helvetica", 10))
-        style.configure("Treeview.Heading", background="#121212", foreground=self.color_text_muted, relief="flat", font=("Helvetica", 10, "bold"))
-        style.map("Treeview", background=[('selected', '#333333')], foreground=[('selected', self.color_spotify)])
-        style.configure("Spotify.Horizontal.TProgressbar", troughcolor='#404040', background=self.color_spotify, thickness=6)
+        style.configure("Treeview",
+                         background=C["surface"], foreground=C["text"],
+                         rowheight=34, fieldbackground=C["surface"],
+                         borderwidth=0, font=("Segoe UI", 10))
+        style.configure("Treeview.Heading",
+                         background=C["bg"], foreground=C["muted"],
+                         relief="flat", font=("Segoe UI", 9, "bold"))
+        style.map("Treeview",
+                  background=[("selected", C["card"])],
+                  foreground=[("selected", C["accent"])])
+        style.configure("TScrollbar",
+                         background=C["card"], troughcolor=C["surface"],
+                         arrowcolor=C["dim"], borderwidth=0)
+        style.configure("Progress.Horizontal.TProgressbar",
+                         troughcolor=C["card"], background=C["accent"],
+                         thickness=4, borderwidth=0)
+        style.configure("Vol.Horizontal.TProgressbar",
+                         troughcolor=C["card"], background=C["muted"],
+                         thickness=3, borderwidth=0)
 
-        self.main_container = tk.Frame(root, bg=self.color_bg)
-        self.main_container.pack(fill="both", expand=True, padx=15, pady=10)
+    # ── UI Builder ─────────────────────────────
+    def _build_ui(self) -> None:
+        # ── TOP BAR (Search + Title)
+        top = tk.Frame(self.root, bg=C["bg"], height=46)
+        top.pack(fill="x", padx=18, pady=(10, 0))
+        top.pack_propagate(False)
 
-        # SISI KIRI PANEL CRUD
-        self.left_frame = tk.LabelFrame(self.main_container, text=" Pointer Manipulations ", font=("Helvetica", 9, "bold"), bg=self.color_surface, fg=self.color_spotify, bd=1, relief="solid", padx=10, pady=10)
-        self.left_frame.pack(side="left", fill="y", padx=(0, 10))
+        tk.Label(top, text="🎵 DynaPlay", font=("Segoe UI", 14, "bold"),
+                 bg=C["bg"], fg=C["accent"]).pack(side="left")
 
-        tk.Button(self.left_frame, text="➕ Tambah Lagu (Insert)", font=("Helvetica", 9, "bold"), bg=self.color_spotify, fg="black", activebackground="#1aa34a", bd=0, relief="flat", cursor="hand2", padx=10, pady=6, width=22, command=self.popup_insert).pack(pady=10)
-        tk.Button(self.left_frame, text="❌ Hapus Terpilih (Delete)", font=("Helvetica", 9, "bold"), bg="#E91429", fg="white", activebackground="#b1101e", bd=0, relief="flat", cursor="hand2", padx=10, pady=6, width=22, command=self.action_delete).pack(pady=5)
-        tk.Button(self.left_frame, text="💻 Pindah ke Mode CLI", font=("Helvetica", 9, "bold"), bg="#282828", fg=self.color_text, activebackground="#404040", bd=0, relief="flat", cursor="hand2", padx=10, pady=6, width=22, command=self.switch_to_cli).pack(side="bottom", pady=10)
+        # Search bar
+        search_frame = tk.Frame(top, bg=C["card"], padx=8, pady=4)
+        search_frame.pack(side="right", padx=(0, 0))
+        tk.Label(search_frame, text="🔍", font=("Segoe UI", 10),
+                 bg=C["card"], fg=C["muted"]).pack(side="left")
+        search_entry = tk.Entry(search_frame, textvariable=self._search_var,
+                                bg=C["card"], fg=C["text"], insertbackground=C["text"],
+                                bd=0, font=("Segoe UI", 10), width=22)
+        search_entry.pack(side="left", padx=4)
+        search_entry.bind("<KeyRelease>", lambda e: self._refresh_tree())
+        tk.Label(search_frame, text="Cari lagu…", font=("Segoe UI", 9),
+                 bg=C["card"], fg=C["dim"]).pack(side="right")
 
-        # SISI KANAN TABEL PLAYLIST
-        self.right_frame = tk.Frame(self.main_container, bg=self.color_bg)
-        self.right_frame.pack(side="right", fill="both", expand=True)
+        # ── BODY (sidebar + playlist)
+        body = tk.Frame(self.root, bg=C["bg"])
+        body.pack(fill="both", expand=True, padx=18, pady=10)
 
-        columns = ("id", "judul", "artis", "durasi", "genre")
-        self.tree = ttk.Treeview(self.right_frame, columns=columns, show="headings")
-        self.tree.heading("id", text="FILE AUDIO / ID")
-        self.tree.heading("judul", text="JUDUL")
-        self.tree.heading("artis", text="ARTIS")
-        self.tree.heading("durasi", text="DURASI")
-        self.tree.heading("genre", text="GENRE")
-        
-        self.tree.column("id", width=130, anchor="center")
-        self.tree.column("judul", width=150)
-        self.tree.column("artis", width=110)
-        self.tree.column("durasi", width=70, anchor="center")
-        self.tree.column("genre", width=90)
+        # LEFT sidebar
+        sidebar = tk.Frame(body, bg=C["surface"], width=190)
+        sidebar.pack(side="left", fill="y", padx=(0, 10))
+        sidebar.pack_propagate(False)
+
+        tk.Label(sidebar, text="LIBRARY", font=("Segoe UI", 8, "bold"),
+                 bg=C["surface"], fg=C["dim"]).pack(anchor="w", padx=14, pady=(14, 6))
+
+        self._btn_add = self._sidebar_btn(sidebar, "➕  Tambah Lagu", self._popup_insert,
+                                           bg=C["accent"], fg="black")
+        self._sidebar_btn(sidebar, "❌  Hapus Terpilih", self._action_delete,
+                           bg=C["danger"], fg="white")
+
+        sep = tk.Frame(sidebar, bg=C["card"], height=1)
+        sep.pack(fill="x", padx=14, pady=10)
+
+        tk.Label(sidebar, text="URUTKAN", font=("Segoe UI", 8, "bold"),
+                 bg=C["surface"], fg=C["dim"]).pack(anchor="w", padx=14, pady=(0, 6))
+        sort_keys = [("Judul", "judul"), ("Artis", "artis"),
+                     ("Durasi", "durasi"), ("Sering Diputar", "play_count")]
+        for label, key in sort_keys:
+            self._sidebar_btn(sidebar, f"⇅  {label}", lambda k=key: self._sort(k))
+
+        tk.Button(sidebar, text="💻  Mode CLI",
+                  font=("Segoe UI", 9, "bold"), bg=C["hover"], fg=C["muted"],
+                  activebackground=C["card"], activeforeground=C["text"],
+                  bd=0, relief="flat", cursor="hand2", padx=10, pady=6,
+                  command=self._switch_to_cli).pack(side="bottom", fill="x",
+                                                     padx=14, pady=12)
+
+        # PLAYLIST TABLE
+        tbl_frame = tk.Frame(body, bg=C["bg"])
+        tbl_frame.pack(side="right", fill="both", expand=True)
+
+        # Column info: (id, header, width, anchor)
+        cols_cfg = [
+            ("#", 34, "center"),
+            ("judul", 160, "w"),
+            ("artis", 120, "w"),
+            ("durasi", 64, "center"),
+            ("genre", 90, "w"),
+            ("plays", 56, "center"),
+        ]
+        col_ids = [c[0] for c in cols_cfg]
+        self.tree = ttk.Treeview(tbl_frame, columns=col_ids, show="headings",
+                                  selectmode="browse")
+        headers = {"#": "#", "judul": "JUDUL", "artis": "ARTIS",
+                   "durasi": "DURASI", "genre": "GENRE", "plays": "▶"}
+        for cid, w, anc in cols_cfg:
+            self.tree.heading(cid, text=headers[cid],
+                              command=lambda c=cid: self._sort_from_heading(c))
+            self.tree.column(cid, width=w, anchor=anc, minwidth=30)
+
         self.tree.pack(fill="both", expand=True, side="left")
-        
-        scrollbar = ttk.Scrollbar(self.right_frame, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(fill="y", side="right")
+        self.tree.bind("<Double-1>", self._on_double_click)
 
-        # BOTTOM PLAYER KONTROL BAR
-        self.player_bar = tk.Frame(root, bg=self.color_surface, height=90, bd=0)
-        self.player_bar.pack(fill="x", side="bottom")
-        self.player_bar.pack_propagate(False)
+        vsb = ttk.Scrollbar(tbl_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(fill="y", side="right")
 
-        self.meta_frame = tk.Frame(self.player_bar, bg=self.color_surface)
-        self.meta_frame.pack(side="left", fill="y", padx=20, pady=15)
+        # ── BOTTOM PLAYER BAR
+        bar = tk.Frame(self.root, bg=C["surface"], height=96)
+        bar.pack(fill="x", side="bottom")
+        bar.pack_propagate(False)
 
-        self.lbl_judul = tk.Label(self.meta_frame, text="Tidak Ada Lagu", font=("Helvetica", 12, "bold"), bg=self.color_surface, fg=self.color_text)
-        self.lbl_judul.pack(anchor="w")
-        self.lbl_detail = tk.Label(self.meta_frame, text="Artis: -", font=("Helvetica", 9), bg=self.color_surface, fg=self.color_text_muted)
-        self.lbl_detail.pack(anchor="w")
+        # Song meta (left)
+        meta = tk.Frame(bar, bg=C["surface"], width=240)
+        meta.pack(side="left", fill="y", padx=20)
+        meta.pack_propagate(False)
+        self.lbl_title  = tk.Label(meta, text="Tidak ada lagu",
+                                    font=("Segoe UI", 11, "bold"),
+                                    bg=C["surface"], fg=C["text"], anchor="w")
+        self.lbl_title.pack(fill="x", pady=(18, 2))
+        self.lbl_sub    = tk.Label(meta, text="—",
+                                    font=("Segoe UI", 9),
+                                    bg=C["surface"], fg=C["muted"], anchor="w")
+        self.lbl_sub.pack(fill="x")
 
-        self.lbl_visualizer = tk.Label(self.player_bar, text="", font=("Helvetica", 14), bg=self.color_surface, fg=self.color_spotify)
-        self.lbl_visualizer.pack(side="left", padx=15)
+        # Visualizer (left-center)
+        self.lbl_vis = tk.Label(bar, text="", font=("Consolas", 9),
+                                 bg=C["surface"], fg=C["accent"], width=18)
+        self.lbl_vis.pack(side="left", padx=10)
 
-        self.center_control = tk.Frame(self.player_bar, bg=self.color_surface)
-        self.center_control.pack(side="right", fill="both", expand=True, pady=10)
+        # Volume (right)
+        vol_frame = tk.Frame(bar, bg=C["surface"])
+        vol_frame.pack(side="right", padx=20, pady=20, fill="y")
+        tk.Label(vol_frame, text="🔊", font=("Segoe UI", 10),
+                 bg=C["surface"], fg=C["muted"]).pack(side="left")
+        self.vol_bar = ttk.Scale(vol_frame, from_=0, to=100, orient="horizontal",
+                                  length=90, command=self._on_volume)
+        self.vol_bar.set(AudioEngine._volume * 100)
+        self.vol_bar.pack(side="left", padx=4)
 
-        self.buttons_row = tk.Frame(self.center_control, bg=self.color_surface)
-        self.buttons_row.pack()
+        # Center controls
+        center = tk.Frame(bar, bg=C["surface"])
+        center.pack(fill="both", expand=True, pady=6)
 
-        self.btn_prev = tk.Button(self.buttons_row, text="⏮", font=("Helvetica", 14), bg=self.color_surface, fg=self.color_text_muted, activebackground=self.color_surface, activeforeground=self.color_text, bd=0, command=self.action_prev, cursor="hand2")
-        self.btn_prev.pack(side="left", padx=15)
+        btn_row = tk.Frame(center, bg=C["surface"])
+        btn_row.pack()
 
-        self.btn_pause = tk.Button(self.buttons_row, text="⏸", font=("Helvetica", 14, "bold"), bg=self.color_text, fg="black", activebackground=self.color_spotify, activeforeground="black", bd=0, width=3, height=1, relief="flat", command=self.action_pause, cursor="hand2")
-        self.btn_pause.pack(side="left", padx=15)
+        self.btn_shuf   = self._ctrl_btn(btn_row, "🔀", self._toggle_shuffle, small=True)
+        self.btn_prev   = self._ctrl_btn(btn_row, "⏮", self._action_prev)
+        self.btn_play   = self._ctrl_btn(btn_row, "⏸", self._action_pause, primary=True)
+        self.btn_next   = self._ctrl_btn(btn_row, "⏭", self._action_next)
+        self.btn_rep    = self._ctrl_btn(btn_row, "🔁", self._toggle_repeat, small=True)
 
-        self.btn_next = tk.Button(self.buttons_row, text="⏭", font=("Helvetica", 14), bg=self.color_surface, fg=self.color_text_muted, activebackground=self.color_surface, activeforeground=self.color_text, bd=0, command=self.action_next, cursor="hand2")
-        self.btn_next.pack(side="left", padx=15)
-        
-        self.btn_repeat = tk.Button(self.buttons_row, text="🔁", font=("Helvetica", 12), bg=self.color_surface, fg=self.color_text_muted, activebackground=self.color_surface, activeforeground=self.color_spotify, bd=0, command=self.toggle_repeat, cursor="hand2")
-        self.btn_repeat.pack(side="left", padx=15)
+        # Progress row
+        prog_row = tk.Frame(center, bg=C["surface"])
+        prog_row.pack(fill="x", padx=50, pady=(4, 0))
 
-        # PROGRESS BAR TIMELINE
-        self.progress_row = tk.Frame(self.center_control, bg=self.color_surface)
-        self.progress_row.pack(fill="x", padx=40, pady=(5, 0))
+        self.lbl_curr = tk.Label(prog_row, text="0:00", font=("Segoe UI", 8),
+                                  bg=C["surface"], fg=C["muted"], width=5)
+        self.lbl_curr.pack(side="left")
 
-        self.lbl_time_current = tk.Label(self.progress_row, text="00:00", font=("Helvetica", 8), bg=self.color_surface, fg=self.color_text_muted)
-        self.lbl_time_current.pack(side="left", padx=5)
+        self.progress = ttk.Progressbar(prog_row, orient="horizontal",
+                                         mode="determinate",
+                                         style="Progress.Horizontal.TProgressbar")
+        self.progress.pack(side="left", fill="x", expand=True, padx=6)
 
-        self.progress_bar = ttk.Progressbar(self.progress_row, orient="horizontal", mode="determinate", style="Spotify.Horizontal.TProgressbar")
-        self.progress_bar.pack(side="left", fill="x", expand=True, padx=5)
+        self.lbl_total = tk.Label(prog_row, text="0:00", font=("Segoe UI", 8),
+                                   bg=C["surface"], fg=C["muted"], width=5)
+        self.lbl_total.pack(side="right")
 
-        self.lbl_time_max = tk.Label(self.progress_row, text="00:00", font=("Helvetica", 8), bg=self.color_surface, fg=self.color_text_muted)
-        self.lbl_time_max.pack(side="right", padx=5)
+        # Click on progress bar to seek (simulated)
+        self.progress.bind("<Button-1>", self._on_progress_click)
 
-        self.refresh_ui()
-        if self.dll.current:
-            AudioEngine.play(self.dll.current)
-        self.start_animation_loop()
+    # ── UI Helpers ─────────────────────────────
+    def _sidebar_btn(self, parent, text, cmd, bg=None, fg=None) -> tk.Button:
+        bg = bg or C["hover"]
+        fg = fg or C["text"]
+        btn = tk.Button(parent, text=text, font=("Segoe UI", 9, "bold"),
+                        bg=bg, fg=fg, activebackground=C["card"],
+                        activeforeground=C["text"], bd=0, relief="flat",
+                        cursor="hand2", padx=10, pady=7, anchor="w",
+                        command=cmd)
+        btn.pack(fill="x", padx=14, pady=2)
+        return btn
 
-    def format_durasi(self, detik):
-        return f"{detik // 60:02d}:{detik % 60:02d}"
-
-    def refresh_ui(self):
-        if self.dll.current:
-            curr = self.dll.current
-            self.lbl_judul.config(text=curr.judul)
-            self.lbl_detail.config(text=f"{curr.artis} • {curr.genre}")
-            self.lbl_time_max.config(text=self.format_durasi(curr.durasi))
-            self.anim_running = not AudioEngine.is_paused
-            
-            if AudioEngine.is_paused:
-                self.btn_pause.config(text="▶")
-            else:
-                self.btn_pause.config(text="⏸")
+    def _ctrl_btn(self, parent, text, cmd, primary=False, small=False) -> tk.Button:
+        if primary:
+            cfg = dict(bg=C["text"], fg="black", font=("Segoe UI", 15, "bold"),
+                       width=3, relief="flat")
+        elif small:
+            cfg = dict(bg=C["surface"], fg=C["dim"], font=("Segoe UI", 12),
+                       relief="flat")
         else:
-            self.lbl_judul.config(text="Tidak Ada Lagu")
-            self.lbl_detail.config(text="Artis: -")
-            self.lbl_time_max.config(text="00:00")
-            self.progress_bar['value'] = 0
-            self.lbl_time_current.config(text="00:00")
-            self.anim_running = False
-            self.btn_pause.config(text="▶")
-            self.lbl_visualizer.config(text="")
+            cfg = dict(bg=C["surface"], fg=C["muted"], font=("Segoe UI", 16),
+                       relief="flat")
+        btn = tk.Button(parent, text=text, bd=0, cursor="hand2",
+                        activebackground=C["surface"], **cfg, command=cmd)
+        btn.pack(side="left", padx=10 if primary else 6)
+        return btn
 
+    @staticmethod
+    def _fmt(s: int) -> str:
+        return f"{s // 60}:{s % 60:02d}"
+
+    # ── Tree Refresh ───────────────────────────
+    def _refresh_tree(self) -> None:
+        kw = self._search_var.get().lower().strip()
         for row in self.tree.get_children():
             self.tree.delete(row)
-            
+        temp = self.dll.head
+        idx  = 1
+        while temp:
+            if kw and kw not in temp.judul.lower() and kw not in temp.artis.lower() \
+               and kw not in temp.genre.lower():
+                temp = temp.next
+                idx += 1
+                continue
+            tag = "playing" if temp == self.dll.current else "normal"
+            self.tree.insert("", "end", iid=temp.id,
+                              values=(idx, temp.judul, temp.artis,
+                                      self._fmt(temp.durasi), temp.genre,
+                                      temp.play_count),
+                              tags=(tag,))
+            temp = temp.next
+            idx += 1
+        self.tree.tag_configure("playing", background="#1E3A2A", foreground=C["accent"])
+        self.tree.tag_configure("normal",  background=C["surface"], foreground=C["text"])
+
+    def _refresh_ui(self) -> None:
+        curr = self.dll.current
+        if curr:
+            self.lbl_title.config(text=curr.judul)
+            self.lbl_sub.config(text=f"{curr.artis}  •  {curr.genre}  •  ▶ {curr.play_count}×")
+            self.lbl_total.config(text=self._fmt(curr.durasi))
+            self.btn_play.config(text="⏸" if not AudioEngine.is_paused else "▶")
+        else:
+            self.lbl_title.config(text="Tidak ada lagu")
+            self.lbl_sub.config(text="—")
+            self.lbl_total.config(text="0:00")
+            self.lbl_curr.config(text="0:00")
+            self.progress["value"] = 0
+            self.btn_play.config(text="▶")
+
+        # Repeat / shuffle button colors
+        self.btn_rep.config(fg=C["accent"] if self.repeat_mode  else C["dim"])
+        self.btn_shuf.config(fg=C["accent"] if self.shuffle_mode else C["dim"])
+        self._refresh_tree()
+
+    # ── Playback Controls ──────────────────────
+    def _action_next(self) -> None:
+        if self.repeat_mode and self.dll.current:
+            # Manual next paksa lewati repeat
+            self.dll.current = (self.dll.current.next or self.dll.head)
+        else:
+            self.dll.next_song(False, self.shuffle_mode)
+        AudioEngine.play(self.dll.current)
+        self._prog_secs = 0
+        self._anim_run  = True
+        self._refresh_ui()
+
+    def _action_prev(self) -> None:
+        self.dll.prev_song(self.shuffle_mode)
+        AudioEngine.play(self.dll.current)
+        self._prog_secs = 0
+        self._anim_run  = True
+        self._refresh_ui()
+
+    def _action_pause(self) -> None:
+        if not self.dll.current:
+            return
+        paused = AudioEngine.toggle_pause()
+        self._anim_run = not paused
+        self._refresh_ui()
+
+    def _toggle_repeat(self) -> None:
+        self.repeat_mode = not self.repeat_mode
+        self._refresh_ui()
+
+    def _toggle_shuffle(self) -> None:
+        self.shuffle_mode = not self.shuffle_mode
+        if self.shuffle_mode:
+            self.dll.build_shuffle()
+        self._refresh_ui()
+
+    def _on_volume(self, val) -> None:
+        AudioEngine.set_volume(float(val) / 100)
+
+    def _on_progress_click(self, event) -> None:
+        """Klik pada progress bar untuk seek (simulasi)."""
+        if not self.dll.current:
+            return
+        w = self.progress.winfo_width()
+        if w == 0:
+            return
+        ratio = event.x / w
+        self._prog_secs = int(ratio * self.dll.current.durasi)
+        self.progress["value"] = ratio * 100
+        self.lbl_curr.config(text=self._fmt(self._prog_secs))
+
+    def _on_double_click(self, event) -> None:
+        """Double-click baris untuk langsung memutar lagu itu."""
+        sel = self.tree.selection()
+        if not sel:
+            return
+        song_id = sel[0]          # iid = node.id
         temp = self.dll.head
         while temp:
-            tag = "playing" if temp == self.dll.current else "normal"
-            self.tree.insert("", "end", values=(temp.id, temp.judul, temp.artis, self.format_durasi(temp.durasi), temp.genre), tags=(tag,))
+            if temp.id == song_id:
+                self.dll.current = temp
+                AudioEngine.play(temp)
+                self._prog_secs = 0
+                self._anim_run  = True
+                self._refresh_ui()
+                return
             temp = temp.next
-            
-        self.tree.tag_configure("playing", background="#1DB954", foreground="black")
-        self.tree.tag_configure("normal", background=self.color_surface, foreground=self.color_text)
 
-    def action_next(self):
-        # Jika tombol next manual diklik saat repeat on, paksa geser node pointer
-        if self.repeat_mode and self.dll.current:
-            self.dll.current = self.dll.current.next if self.dll.current.next else self.dll.head
-            AudioEngine.play(self.dll.current)
-        elif self.dll.next_song(self.repeat_mode):
-            AudioEngine.play(self.dll.current)
-        self.current_progress_seconds = 0
-        self.refresh_ui()
-
-    def action_prev(self):
-        if self.dll.prev_song():
-            AudioEngine.play(self.dll.current)
-        self.current_progress_seconds = 0
-        self.refresh_ui()
-
-    def action_pause(self):
-        if self.dll.current:
-            state_paused = AudioEngine.toggle_pause()
-            self.anim_running = not state_paused
-            self.refresh_ui()
-
-    def toggle_repeat(self):
-        self.repeat_mode = not self.repeat_mode
-        if self.repeat_mode:
-            self.btn_repeat.config(fg=self.color_spotify)
-        else:
-            self.btn_repeat.config(fg=self.color_text_muted)
-
-    def action_delete(self):
-        selected_item = self.tree.selection()
-        if not selected_item:
-            messagebox.showwarning("Peringatan", "Pilih baris lagu pada tabel terlebih dahulu!")
-            return
-        
-        values = self.tree.item(selected_item, "values")
-        song_id = values[0]
-        
-        current_before_delete = self.dll.current
-        if self.dll.delete_by_id(song_id):
-            DataManager.save_playlist(self.dll)
-            messagebox.showinfo("Sukses", f"Lagu dengan ID {song_id} berhasil dihapus.")
-            if current_before_delete != self.dll.current:
-                AudioEngine.play(self.dll.current)
-            self.current_progress_seconds = 0
-            self.refresh_ui()
-
-    def popup_insert(self):
+    # ── CRUD Popups ────────────────────────────
+    def _popup_insert(self) -> None:
         win = tk.Toplevel(self.root)
-        win.title("Insert Node Baru")
-        win.geometry("380x330")
-        win.configure(bg=self.color_surface)
+        win.title("Tambah Lagu Baru")
+        win.geometry("400x360")
+        win.configure(bg=C["surface"])
         win.resizable(False, False)
-        
-        labels = ["Posisi (1-Indexed):", "ID / File Audio:", "Judul Lagu:", "Nama Artis:", "Durasi (Detik):", "Genre Musik:"]
-        entries = []
-        
-        for i, text in enumerate(labels):
-            tk.Label(win, text=text, bg=self.color_surface, fg=self.color_text_muted, font=("Helvetica", 9, "bold")).grid(row=i, column=0, padx=15, pady=6, sticky="e")
-            ent = tk.Entry(win, bg=self.color_card, fg=self.color_text, insertbackground="white", bd=1, relief="solid", width=18)
-            ent.grid(row=i, column=1, padx=5, pady=6)
+        win.grab_set()
+
+        fields = [
+            ("Posisi:", str(self.dll.size + 1)),
+            ("File / ID:", ""),
+            ("Judul:", ""),
+            ("Artis:", ""),
+            ("Durasi (detik):", "0"),
+            ("Genre:", ""),
+        ]
+        entries: list[tk.Entry] = []
+
+        for i, (lbl, default) in enumerate(fields):
+            tk.Label(win, text=lbl, bg=C["surface"], fg=C["muted"],
+                     font=("Segoe UI", 9, "bold"), width=16,
+                     anchor="e").grid(row=i, column=0, padx=(14, 4), pady=7, sticky="e")
+            ent = tk.Entry(win, bg=C["card"], fg=C["text"],
+                           insertbackground=C["text"], bd=0, relief="solid",
+                           font=("Segoe UI", 10), width=22)
+            ent.insert(0, default)
+            ent.grid(row=i, column=1, padx=4, pady=7, sticky="ew")
             entries.append(ent)
-            
-        entries[0].insert(0, str(self.dll.size + 1))
-        
-# FITUR PERBAIKAN: Membaca Durasi Asli MP3 Menggunakan Pygame Audio
-        def browse_file():
-            file_selected = filedialog.askopenfilename(filetypes=[("Audio Files", "*.mp3")])
-            if file_selected:
-                filename = os.path.basename(file_selected)
-                
-                # 1. Auto-fill data nama file ke kolom ID
-                entries[1].delete(0, tk.END)
-                entries[1].insert(0, filename)
-                
-                # 2. Auto-fill nama file ke Judul sebagai saran awal
-                entries[2].delete(0, tk.END)
-                entries[2].insert(0, filename.replace(".mp3", "").replace(".MP3", ""))
-                
-                # 3. Proses Copy File Fisik secara otomatis ke folder 'music'
-                if not os.path.exists(AudioEngine.FOLDER):
-                    os.makedirs(AudioEngine.FOLDER)
-                dest_path = os.path.join(AudioEngine.FOLDER, filename)
-                try:
-                    shutil.copy(file_selected, dest_path)
-                    
-                    # 4. HITUNG DURASI ASLI FILE MP3 MENGGUNAKAN PYGAME
-                    if 'pygame' in sys.modules:
-                        # Muat sebentar ke sound objek untuk dibaca panjangnya
-                        suara_temp = pygame.mixer.Sound(dest_path)
-                        durasi_detik = int(suara_temp.get_length())
-                        
-                        # Masukkan durasi asli ke kolom input secara otomatis
-                        entries[4].delete(0, tk.END)
-                        entries[4].insert(0, str(durasi_detik))
-                except Exception as e:
-                    print(f"Gagal memproses file audio: {e}")
-                    # Jika gagal membaca, berikan durasi standar cadangan
-                    entries[4].delete(0, tk.END)
-                    entries[4].insert(0, "210")
+        win.columnconfigure(1, weight=1)
 
-        btn_browse = tk.Button(win, text="📁 Browse", font=("Helvetica", 8, "bold"), bg=self.color_card, fg=self.color_spotify, bd=0, command=browse_file)
-        btn_browse.grid(row=1, column=2, padx=5)
-
-        def simpan():
+        def browse() -> None:
+            path = filedialog.askopenfilename(
+                title="Pilih file MP3",
+                filetypes=[("Audio MP3", "*.mp3"), ("Semua File", "*.*")])
+            if not path:
+                return
+            fname = os.path.basename(path)
+            entries[1].delete(0, "end"); entries[1].insert(0, fname)
+            entries[2].delete(0, "end"); entries[2].insert(0, os.path.splitext(fname)[0])
+            os.makedirs(AudioEngine.FOLDER, exist_ok=True)
+            dest = os.path.join(AudioEngine.FOLDER, fname)
             try:
-                pos = int(entries[0].get())
-                song_id = entries[1].get().strip()
-                if not song_id:
-                    messagebox.showerror("Error", "ID/Nama file tidak boleh kosong!")
+                if not os.path.exists(dest):
+                    shutil.copy(path, dest)
+                dur = AudioEngine.get_duration(dest)
+                entries[4].delete(0, "end"); entries[4].insert(0, str(dur or 180))
+            except Exception as e:
+                messagebox.showerror("Error", f"Gagal memproses file:\n{e}", parent=win)
+
+        tk.Button(win, text="📁 Browse", font=("Segoe UI", 9),
+                  bg=C["card"], fg=C["accent"], bd=0, cursor="hand2",
+                  command=browse).grid(row=1, column=2, padx=6)
+
+        def simpan() -> None:
+            try:
+                pos   = int(entries[0].get())
+                sid   = entries[1].get().strip()
+                if not sid:
+                    messagebox.showerror("Error", "Nama file tidak boleh kosong!", parent=win)
                     return
-                
-                node = Node(song_id, entries[2].get(), entries[3].get(), int(entries[4].get()), entries[5].get())
+                node = Node(sid, entries[2].get(), entries[3].get(),
+                            int(entries[4].get() or 0), entries[5].get())
                 if self.dll.insert_at(pos, node):
                     DataManager.save_playlist(self.dll)
                     if self.dll.size == 1:
                         AudioEngine.play(self.dll.current)
-                    self.refresh_ui()
+                        self._anim_run = True
+                    self._prog_secs = 0
+                    self._refresh_ui()
                     win.destroy()
                 else:
-                    messagebox.showerror("Error", "Gagal menyisipkan data. Periksa nomor posisi!")
+                    messagebox.showerror("Error", "Posisi tidak valid!", parent=win)
             except ValueError:
-                messagebox.showerror("Error", "Input Posisi dan Durasi wajib angka bulat!")
-                
-        tk.Button(win, text="Simpan ke DLL", font=("Helvetica", 10, "bold"), bg=self.color_spotify, fg="black", bd=0, relief="flat", cursor="hand2", padx=10, pady=5, command=simpan).grid(row=6, columnspan=3, pady=20)
+                messagebox.showerror("Error", "Posisi dan Durasi harus angka!", parent=win)
 
-    def start_animation_loop(self):
-        if self.anim_running and self.dll.current:
-            total_durasi = self.dll.current.durasi
-            self.current_progress_seconds += 1
-            
-            if self.current_progress_seconds > total_durasi:
-                # REPEAT ONE CHECKER LOGIC:
+        tk.Button(win, text="  Simpan  ", font=("Segoe UI", 10, "bold"),
+                  bg=C["accent"], fg="black", bd=0, relief="flat",
+                  cursor="hand2", pady=7,
+                  command=simpan).grid(row=6, column=0, columnspan=3, pady=18)
+
+    def _action_delete(self) -> None:
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showwarning("Peringatan", "Pilih lagu di playlist terlebih dahulu!")
+            return
+        song_id  = sel[0]           # iid = node.id
+        # cari judul untuk tampilan
+        temp = self.dll.head
+        judul = song_id
+        while temp:
+            if temp.id == song_id:
+                judul = temp.judul
+                break
+            temp = temp.next
+        if not messagebox.askyesno("Konfirmasi Hapus",
+                                    f'Hapus lagu:\n\u201c{judul}\u201d?'):
+            return
+        prev_curr = self.dll.current
+        if self.dll.delete_by_id(song_id):
+            DataManager.save_playlist(self.dll)
+            if prev_curr != self.dll.current:
+                AudioEngine.play(self.dll.current)
+                self._anim_run = True
+            self._prog_secs = 0
+            self._refresh_ui()
+
+    def _sort(self, key: str) -> None:
+        self.dll.sort_by(key)
+        DataManager.save_playlist(self.dll)
+        self._refresh_tree()
+
+    def _sort_from_heading(self, col: str) -> None:
+        key_map = {"judul": "judul", "artis": "artis",
+                   "durasi": "durasi", "genre": "genre", "plays": "play_count"}
+        if col in key_map:
+            self._sort(key_map[col])
+
+    # ── Animation Tick (1 detik) ───────────────
+    def _tick(self) -> None:
+        curr = self.dll.current
+        if self._anim_run and curr and not AudioEngine.is_paused:
+            self._prog_secs += 1
+            if self._prog_secs >= curr.durasi:
+                # Lagu habis → next
                 if self.repeat_mode:
-                    self.current_progress_seconds = 0
-                    AudioEngine.play(self.dll.current) # Putar ulang lagu yang sama
-                    self.refresh_ui()
+                    self._prog_secs = 0
+                    AudioEngine.play(curr)
                 else:
-                    self.action_next()
+                    self._action_next()
             else:
-                persentase = (self.current_progress_seconds / total_durasi) * 100
-                self.progress_bar['value'] = persentase
-                self.lbl_time_current.config(text=self.format_durasi(self.current_progress_seconds))
-
-                bars = ["█ ▄ █ ▄ ▄", "▄ █ ▄ █ ▄", "█ █ ▄ ▄ █", "▄ ▄ █ █ ▄", "█ ▄ ▄ █ █"]
-                self.lbl_visualizer.config(text=random.choice(bars))
+                pct = (self._prog_secs / curr.durasi) * 100
+                self.progress["value"] = pct
+                self.lbl_curr.config(text=self._fmt(self._prog_secs))
+                # Animasi visualizer
+                self._vis_idx = (self._vis_idx + 1) % len(VISUALIZER_FRAMES)
+                self.lbl_vis.config(text=VISUALIZER_FRAMES[self._vis_idx])
         elif AudioEngine.is_paused:
-            self.lbl_visualizer.config(text="  ⏸ JEDA  ")
-        else:
-            self.progress_bar['value'] = 0
-            self.lbl_time_current.config(text="00:00")
-            self.lbl_visualizer.config(text="")
-            self.current_progress_seconds = 0
+            self.lbl_vis.config(text="  ⏸  ")
+        elif not curr:
+            self.lbl_vis.config(text="")
+            self.progress["value"] = 0
+            self.lbl_curr.config(text="0:00")
 
-        self.after_id = self.root.after(1000, self.start_animation_loop)
+        self._after_id = self.root.after(1000, self._tick)
 
-    def switch_to_cli(self):
-        if self.after_id:
-            self.root.after_cancel(self.after_id)
-        AudioEngine.stop()  
+    # ── Switch ─────────────────────────────────
+    def _switch_to_cli(self) -> None:
+        if self._after_id:
+            self.root.after_cancel(self._after_id)
+        AudioEngine.stop()
+        DataManager.save_playlist(self.dll)
         self.root.destroy()
 
 
-# ==========================================
-# 5. MAIN PROGRAM LOOP (ORCHESTRATOR)
-# ==========================================
+# ══════════════════════════════════════════════
+#  5. MAIN ORCHESTRATOR
+# ══════════════════════════════════════════════
 
-def main():
-    playlist_shared = DataManager.load_playlist()
-    mode = "CLI" 
-    
+def main() -> None:
+    playlist = DataManager.load_playlist()
+    mode     = "CLI"   # mulai dari CLI dulu
+
     while True:
         if mode == "CLI":
-            cli = PlaylistCLI(playlist_shared)
-            mode = cli.menu_utama() 
-            
+            cli  = PlaylistCLI(playlist)
+            mode = cli.menu_utama()      # returns "GUI"
+
         elif mode == "GUI":
             root = tk.Tk()
-            gui = PlaylistGUI(root, playlist_shared)
+            PlaylistGUI(root, playlist)
             root.mainloop()
             mode = "CLI"
+
 
 if __name__ == "__main__":
     main()

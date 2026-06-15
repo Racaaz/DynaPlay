@@ -1,37 +1,42 @@
 [
     {
-        "id": "SONG-001.mp3",
-        "judul": "Shape Of My Heart",
-        "artis": "Backstreet Boys",
-        "durasi": 228,
-        "genre": "Romance"
-    },
-    {
-        "id": "SONG-002.mp3",
-        "judul": "Marry You",
-        "artis": "Bruno Mars",
-        "durasi": 227,
-        "genre": "Romance"
+        "id": "0019.mp3",
+        "judul": "Confident",
+        "artis": "Justin Bieber",
+        "durasi": 210,
+        "genre": "Pop",
+        "play_count": 3
     },
     {
         "id": "SONG-003.mp3",
         "judul": "It Will Rain",
         "artis": "Bruno Mars",
         "durasi": 266,
-        "genre": "Romance"
+        "genre": "Romance",
+        "play_count": 2
     },
     {
-        "id": "0019.mp3",
-        "judul": "Confident",
-        "artis": "Justin Bieber",
-        "durasi": 210,
-        "genre": "Pop"
+        "id": "SONG-002.mp3",
+        "judul": "Marry You",
+        "artis": "Bruno Mars",
+        "durasi": 227,
+        "genre": "Romance",
+        "play_count": 5
     },
     {
         "id": "0001.mp3",
         "judul": "One Of The Girls",
         "artis": "The Weeknd",
         "durasi": 258,
-        "genre": "R&B"
+        "genre": "R&B",
+        "play_count": 6
+    },
+    {
+        "id": "SONG-001.mp3",
+        "judul": "Shape Of My Heart",
+        "artis": "Backstreet Boys",
+        "durasi": 228,
+        "genre": "Romance",
+        "play_count": 4
     }
 ]
