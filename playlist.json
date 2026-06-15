@@ -1,0 +1,23 @@
+[
+    {
+        "id": "SONG-001.mp3",
+        "judul": "Shape Of My Heart",
+        "artis": "Backstreet Boys",
+        "durasi": 228,
+        "genre": "Romance"
+    },
+    {
+        "id": "SONG-002.mp3",
+        "judul": "Marry You",
+        "artis": "Bruno Mars",
+        "durasi": 227,
+        "genre": "Romance"
+    },
+    {
+        "id": "SONG-003.mp3",
+        "judul": "It Will Rain",
+        "artis": "Bruno Mars",
+        "durasi": 266,
+        "genre": "Romance"
+    }
+]
