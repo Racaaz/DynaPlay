@@ -1,19 +1,11 @@
 [
     {
-        "id": "0019.mp3",
-        "judul": "Confident",
-        "artis": "Justin Bieber",
-        "durasi": 210,
-        "genre": "Pop",
-        "play_count": 3
-    },
-    {
-        "id": "SONG-003.mp3",
-        "judul": "It Will Rain",
+        "id": "SONG-005.mp3",
+        "judul": "Versace on The Floor",
         "artis": "Bruno Mars",
-        "durasi": 266,
-        "genre": "Romance",
-        "play_count": 2
+        "durasi": 336,
+        "genre": "Pop",
+        "play_count": 9
     },
     {
         "id": "SONG-002.mp3",
@@ -21,15 +13,23 @@
         "artis": "Bruno Mars",
         "durasi": 227,
         "genre": "Romance",
-        "play_count": 5
+        "play_count": 13
     },
     {
-        "id": "0001.mp3",
+        "id": "SONG-004.mp3",
         "judul": "One Of The Girls",
         "artis": "The Weeknd",
         "durasi": 258,
         "genre": "R&B",
-        "play_count": 6
+        "play_count": 13
+    },
+    {
+        "id": "SONG-003.mp3",
+        "judul": "It Will Rain",
+        "artis": "Bruno Mars",
+        "durasi": 266,
+        "genre": "Romance",
+        "play_count": 16
     },
     {
         "id": "SONG-001.mp3",
@@ -37,6 +37,6 @@
         "artis": "Backstreet Boys",
         "durasi": 228,
         "genre": "Romance",
-        "play_count": 4
+        "play_count": 36
     }
 ]

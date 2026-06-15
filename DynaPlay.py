@@ -359,10 +359,10 @@ class PlaylistCLI:
             print(f"|{'  DYNAPLAY MUSIC PLAYER':^{W}}|")
             print(f"+{batas}+")
             if curr:
-                print(f"|  Lagu   : {curr.judul[:W-12]:<{W-12}}|")
-                print(f"|  Artis  : {curr.artis[:W-12]:<{W-12}}|")
+                print(f"|  Lagu   : {curr.judul[:W-12]:<{W-12}} |")
+                print(f"|  Artis  : {curr.artis[:W-12]:<{W-12}} |")
                 status_txt = "JEDA" if AudioEngine.is_paused else "BERMAIN"
-                print(f"|  Status : {status_txt:<{W-12}}|")
+                print(f"|  Status : {status_txt:<{W-12}} |")
             else:
                 print(f"|{'  Tidak ada lagu yang diputar':<{W}}|")
 
@@ -377,13 +377,14 @@ class PlaylistCLI:
             print(f"|{vol_line:<{W}}|")
             print(f"+{batas}+")
             menu_items = [
-                (" 1. Lagu Berikutnya",  " 6. Lihat Playlist"),
-                (" 2. Lagu Sebelumnya",  " 7. Repeat One"),
-                (" 3. Pause / Resume",   " 8. Shuffle"),
-                (" 4. Tambah Lagu",      " 9. Volume (+/-)"),
-                (" 5. Hapus Lagu",       "10. Cari Lagu"),
-                ("11. Urutkan Playlist", "12. Pindah ke GUI"),
-                ("13. Keluar", ""),
+                (" 1. Lagu Berikutnya",  " 8. Shuffle"),
+                (" 2. Lagu Sebelumnya",  " 9. Volume (+/-)"),
+                (" 3. Pause / Resume",   "10. Cari Lagu"),
+                (" 4. Tambah Lagu",      "11. Urutkan Playlist"),
+                (" 5. Hapus Lagu",       "12. Pindah ke GUI"),
+                (" 6. Lihat Playlist",   "13. Keluar"),
+                (" 7. Repeat One",       "")
+
             ]
             for kiri, kanan in menu_items:
                 baris = f"  {kiri:<24}  {kanan}"
