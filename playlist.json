@@ -5,7 +5,7 @@
         "artis": "Bruno Mars",
         "durasi": 336,
         "genre": "Pop",
-        "play_count": 10
+        "play_count": 16
     },
     {
         "id": "SONG-002.mp3",
@@ -13,7 +13,7 @@
         "artis": "Bruno Mars",
         "durasi": 227,
         "genre": "Romance",
-        "play_count": 13
+        "play_count": 28
     },
     {
         "id": "SONG-004.mp3",
@@ -21,7 +21,7 @@
         "artis": "The Weeknd",
         "durasi": 258,
         "genre": "R&B",
-        "play_count": 13
+        "play_count": 19
     },
     {
         "id": "SONG-003.mp3",
@@ -29,7 +29,7 @@
         "artis": "Bruno Mars",
         "durasi": 266,
         "genre": "Romance",
-        "play_count": 16
+        "play_count": 18
     },
     {
         "id": "SONG-001.mp3",
@@ -37,6 +37,6 @@
         "artis": "Backstreet Boys",
         "durasi": 228,
         "genre": "Romance",
-        "play_count": 36
+        "play_count": 40
     }
 ]

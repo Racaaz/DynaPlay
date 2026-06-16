@@ -3,6 +3,7 @@ import os
 import shutil
 import random
 import sys
+import time
 import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
 
@@ -63,7 +64,7 @@ class DoublyLinkedList:
         self.tail:    Node | None = None
         self.current: Node | None = None
         self.size:    int = 0
-        self._shuffle_order: list[Node] = []   # urutan shuffle sementara
+        self._shuffle_order: list[Node] = []   # urutan acak (terpisah dari DLL asli)
         self._shuffle_idx:   int = 0
 
     # ── Insertion ──────────────────────────────
@@ -127,11 +128,11 @@ class DoublyLinkedList:
         return False
 
     # ── Navigation ─────────────────────────────
-    def next_song(self, repeat_mode=False, shuffle_mode=False) -> "Node | None":
+    def next_song(self, shuffle_mode: bool = False) -> "Node | None":
+        """Pindah ke lagu berikutnya. Jika shuffle_mode aktif, ikuti
+        urutan acak (_shuffle_order) tanpa mengubah pointer next/prev asli."""
         if not self.current:
             return None
-        if repeat_mode:
-            return self.current
         if shuffle_mode and self._shuffle_order:
             self._shuffle_idx = (self._shuffle_idx + 1) % len(self._shuffle_order)
             self.current = self._shuffle_order[self._shuffle_idx]
@@ -139,7 +140,8 @@ class DoublyLinkedList:
         self.current = self.current.next or self.head
         return self.current
 
-    def prev_song(self, shuffle_mode=False) -> "Node | None":
+    def prev_song(self, shuffle_mode: bool = False) -> "Node | None":
+        """Pindah ke lagu sebelumnya, juga mengikuti shuffle bila aktif."""
         if not self.current:
             return None
         if shuffle_mode and self._shuffle_order:
@@ -152,14 +154,21 @@ class DoublyLinkedList:
 
     # ── Shuffle ────────────────────────────────
     def build_shuffle(self) -> None:
-        """Bangun urutan acak dari semua node."""
+        """Bangun urutan pemutaran acak dari semua node di DLL.
+
+        PENTING: ini hanya membuat daftar urutan pemutaran terpisah
+        (_shuffle_order). Struktur DLL asli (head/tail/next/prev) TIDAK
+        diubah sama sekali, sehingga urutan data lain (tampilan tabel,
+        sort, simpan ke JSON) tetap utuh sesuai posisi aslinya.
+        """
         nodes: list[Node] = []
         temp = self.head
         while temp:
             nodes.append(temp)
             temp = temp.next
         random.shuffle(nodes)
-        # Pastikan lagu yang sedang bermain ada di posisi pertama
+        # Lagu yang sedang berjalan ditempatkan di depan supaya playback
+        # tidak melompat ke lagu lain saat shuffle baru diaktifkan.
         if self.current and self.current in nodes:
             nodes.remove(self.current)
             nodes.insert(0, self.current)
@@ -203,24 +212,30 @@ class DoublyLinkedList:
 # ══════════════════════════════════════════════
 
 class AudioEngine:
-    FOLDER    = "music"
-    is_paused = False
-    _volume   = 0.7       # 0.0 – 1.0
+    FOLDER       = "music"
+    is_paused    = False
+    _volume      = 0.7       # 0.0 – 1.0
+    _last_play_t = 0.0       # waktu (epoch) terakhir play() dipanggil
 
     @classmethod
-    def play(cls, node: Node | None) -> None:
+    def play(cls, node: Node | None, loop: bool = False) -> None:
+        """Putar lagu. Jika loop=True, pygame mengulang track ini sendiri
+        secara native (loops=-1) tanpa bergantung pada timer Python atau
+        akurasi nilai durasi yang tersimpan — sehingga repeat tidak akan
+        pernah membuat audio terputus/diam."""
         if not node:
             return
         os.makedirs(cls.FOLDER, exist_ok=True)
         file_path = os.path.join(cls.FOLDER, node.id)
         cls.is_paused = False
         node.play_count += 1
+        cls._last_play_t = time.time()
         if PYGAME_AVAILABLE:
             try:
                 if os.path.exists(file_path):
                     pygame.mixer.music.load(file_path)
                     pygame.mixer.music.set_volume(cls._volume)
-                    pygame.mixer.music.play()
+                    pygame.mixer.music.play(loops=-1 if loop else 0)
                 else:
                     print(f"[Simulasi] File tidak ditemukan: {file_path}")
             except Exception as e:
@@ -252,10 +267,14 @@ class AudioEngine:
             pygame.mixer.music.set_volume(cls._volume)
 
     @classmethod
+    @classmethod
     def is_playing(cls) -> bool:
-        if PYGAME_AVAILABLE:
-            return pygame.mixer.music.get_busy()
-        return False
+        if not PYGAME_AVAILABLE:
+            return False
+        # Beri waktu toleransi 0.3s setelah play() agar tidak false-negative
+        if time.time() - cls._last_play_t < 0.3:
+            return True
+        return pygame.mixer.music.get_busy()
 
     @staticmethod
     def get_duration(filepath: str) -> int:
@@ -318,6 +337,10 @@ class PlaylistCLI:
         self.repeat_mode  = False
         self.shuffle_mode = False
 
+    def _play_current(self) -> None:
+        """Putar lagu current; jika repeat aktif, pygame loop sendiri."""
+        AudioEngine.play(self.dll.current, loop=self.repeat_mode)
+
     @staticmethod
     def fmt(detik: int) -> str:
         return f"{detik // 60:02d}:{detik % 60:02d}"
@@ -347,7 +370,7 @@ class PlaylistCLI:
 
     def menu_utama(self) -> str:
         if self.dll.current:
-            AudioEngine.play(self.dll.current)
+            self._play_current()
 
         while True:
             os.system("cls" if os.name == "nt" else "clear")
@@ -384,7 +407,6 @@ class PlaylistCLI:
                 (" 5. Hapus Lagu",       "12. Pindah ke GUI"),
                 (" 6. Lihat Playlist",   "13. Keluar"),
                 (" 7. Repeat One",       "")
-
             ]
             for kiri, kanan in menu_items:
                 baris = f"  {kiri:<24}  {kanan}"
@@ -394,12 +416,12 @@ class PlaylistCLI:
             pilihan = input("Pilih Menu: ").strip()
 
             if pilihan == "1":
-                self.dll.next_song(self.repeat_mode, self.shuffle_mode)
-                AudioEngine.play(self.dll.current)
+                self.dll.next_song(self.shuffle_mode)
+                self._play_current()
 
             elif pilihan == "2":
                 self.dll.prev_song(self.shuffle_mode)
-                AudioEngine.play(self.dll.current)
+                self._play_current()
 
             elif pilihan == "3":
                 if self.dll.current:
@@ -417,6 +439,9 @@ class PlaylistCLI:
 
             elif pilihan == "7":
                 self.repeat_mode = not self.repeat_mode
+                # Terapkan langsung ke audio yang sedang berjalan
+                if self.dll.current and not AudioEngine.is_paused:
+                    self._play_current()
 
             elif pilihan == "8":
                 self.shuffle_mode = not self.shuffle_mode
@@ -455,7 +480,7 @@ class PlaylistCLI:
                 DataManager.save_playlist(self.dll)
                 print("[✓] Lagu berhasil ditambahkan!")
                 if self.dll.size == 1:
-                    AudioEngine.play(self.dll.current)
+                    self._play_current()
             else:
                 print("[✗] Posisi di luar jangkauan!")
         except ValueError:
@@ -470,7 +495,7 @@ class PlaylistCLI:
             DataManager.save_playlist(self.dll)
             print("[✓] Lagu berhasil dihapus!")
             if prev_curr != self.dll.current:
-                AudioEngine.play(self.dll.current)
+                self._play_current()
         else:
             print("[✗] ID tidak ditemukan!")
         input("Tekan Enter...")
@@ -553,10 +578,15 @@ class PlaylistGUI:
         self._refresh_ui()
 
         if self.dll.current:
-            AudioEngine.play(self.dll.current)
+            self._play_current()
             self._anim_run = True
 
         self._tick()
+
+    def _play_current(self) -> None:
+        """Putar lagu current. Jika repeat aktif, pygame meloop sendiri
+        (loops=-1) sehingga audio tidak pernah terputus oleh timer Python."""
+        AudioEngine.play(self.dll.current, loop=self.repeat_mode)
 
     # ── Window Setup ───────────────────────────
     def _setup_window(self) -> None:
@@ -814,26 +844,23 @@ class PlaylistGUI:
             self.progress["value"] = 0
             self.btn_play.config(text="▶")
 
-        # Repeat / shuffle button colors
-        self.btn_rep.config(fg=C["accent"] if self.repeat_mode  else C["dim"])
+        # Indikator warna tombol repeat/shuffle (hijau = aktif)
+        self.btn_rep.config(fg=C["accent"]  if self.repeat_mode  else C["dim"])
         self.btn_shuf.config(fg=C["accent"] if self.shuffle_mode else C["dim"])
+
         self._refresh_tree()
 
     # ── Playback Controls ──────────────────────
     def _action_next(self) -> None:
-        if self.repeat_mode and self.dll.current:
-            # Manual next paksa lewati repeat
-            self.dll.current = (self.dll.current.next or self.dll.head)
-        else:
-            self.dll.next_song(False, self.shuffle_mode)
-        AudioEngine.play(self.dll.current)
+        self.dll.next_song(self.shuffle_mode)
+        self._play_current()
         self._prog_secs = 0
         self._anim_run  = True
         self._refresh_ui()
 
     def _action_prev(self) -> None:
         self.dll.prev_song(self.shuffle_mode)
-        AudioEngine.play(self.dll.current)
+        self._play_current()
         self._prog_secs = 0
         self._anim_run  = True
         self._refresh_ui()
@@ -847,6 +874,11 @@ class PlaylistGUI:
 
     def _toggle_repeat(self) -> None:
         self.repeat_mode = not self.repeat_mode
+        # Terapkan langsung ke audio yang sedang berjalan supaya pygame
+        # mengaktifkan/melepas mode loop tanpa harus next/prev dulu.
+        if self.dll.current and not AudioEngine.is_paused:
+            self._play_current()
+            self._prog_secs = 0
         self._refresh_ui()
 
     def _toggle_shuffle(self) -> None:
@@ -880,7 +912,7 @@ class PlaylistGUI:
         while temp:
             if temp.id == song_id:
                 self.dll.current = temp
-                AudioEngine.play(temp)
+                self._play_current()
                 self._prog_secs = 0
                 self._anim_run  = True
                 self._refresh_ui()
@@ -953,7 +985,7 @@ class PlaylistGUI:
                 if self.dll.insert_at(pos, node):
                     DataManager.save_playlist(self.dll)
                     if self.dll.size == 1:
-                        AudioEngine.play(self.dll.current)
+                        self._play_current()
                         self._anim_run = True
                     self._prog_secs = 0
                     self._refresh_ui()
@@ -989,7 +1021,7 @@ class PlaylistGUI:
         if self.dll.delete_by_id(song_id):
             DataManager.save_playlist(self.dll)
             if prev_curr != self.dll.current:
-                AudioEngine.play(self.dll.current)
+                self._play_current()
                 self._anim_run = True
             self._prog_secs = 0
             self._refresh_ui()
@@ -1008,28 +1040,42 @@ class PlaylistGUI:
     # ── Animation Tick (1 detik) ───────────────
     def _tick(self) -> None:
         curr = self.dll.current
+
         if self._anim_run and curr and not AudioEngine.is_paused:
             self._prog_secs += 1
+
             if self._prog_secs >= curr.durasi:
-                # Lagu habis → next
                 if self.repeat_mode:
+                    # Audio sudah di-loop secara NATIVE oleh pygame
+                    # (AudioEngine.play(..., loop=True) → loops=-1), jadi
+                    # di sini kita HANYA mereset tampilan progress bar
+                    # visual dan menambah statistik putar — TIDAK
+                    # memanggil play() lagi, agar audio tidak terputus.
                     self._prog_secs = 0
-                    AudioEngine.play(curr)
+                    curr.play_count += 1
+                    self.progress["value"] = 0
+                    self.lbl_curr.config(text="0:00")
+                    self._refresh_ui()
                 else:
+                    # Lagu habis → lanjut ke lagu berikutnya
                     self._action_next()
             else:
+                # ── Masih berjalan ───────────────────────
                 pct = (self._prog_secs / curr.durasi) * 100
                 self.progress["value"] = pct
                 self.lbl_curr.config(text=self._fmt(self._prog_secs))
-                # Animasi visualizer
                 self._vis_idx = (self._vis_idx + 1) % len(VISUALIZER_FRAMES)
                 self.lbl_vis.config(text=VISUALIZER_FRAMES[self._vis_idx])
+
         elif AudioEngine.is_paused:
-            self.lbl_vis.config(text="  ⏸  ")
-        elif not curr:
+            self.lbl_vis.config(text="  ||  ")
+
+        else:
+            # Tidak ada yang diputar
             self.lbl_vis.config(text="")
-            self.progress["value"] = 0
-            self.lbl_curr.config(text="0:00")
+            if not curr:
+                self.progress["value"] = 0
+                self.lbl_curr.config(text="0:00")
 
         self._after_id = self.root.after(1000, self._tick)
 
