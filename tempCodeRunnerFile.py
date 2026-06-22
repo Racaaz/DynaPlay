@@ -1,1 +1,1 @@
-repea
+shuffle

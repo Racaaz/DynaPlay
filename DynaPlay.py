@@ -4,6 +4,7 @@ import shutil
 import random
 import sys
 import time
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk, filedialog
 
@@ -15,8 +16,11 @@ try:
     pygame.mixer.pre_init(44100, -16, 2, 2048)
     pygame.mixer.init()
     PYGAME_AVAILABLE = True
+    MUSIC_END_EVENT  = pygame.USEREVENT + 1
+    pygame.mixer.music.set_endevent(MUSIC_END_EVENT)
 except ImportError:
     PYGAME_AVAILABLE = False
+    MUSIC_END_EVENT  = None
     print("Peringatan: Library 'pygame' belum diinstal. Jalankan: pip install pygame")
 
 
@@ -267,7 +271,6 @@ class AudioEngine:
             pygame.mixer.music.set_volume(cls._volume)
 
     @classmethod
-    @classmethod
     def is_playing(cls) -> bool:
         if not PYGAME_AVAILABLE:
             return False
@@ -369,10 +372,48 @@ class PlaylistCLI:
         print(f"╚{batas}╝")
 
     def menu_utama(self) -> str:
+        # _song_ended: diset True oleh watcher saat lagu habis (thread-safe)
+        # _manual_skip: diset True saat user next/prev manual agar watcher
+        #               tidak salah menganggap lagu selesai secara alami
+        self._song_ended  = False
+        self._manual_skip = False
+
+        def _watcher():
+            """Background thread: polling get_busy() untuk deteksi lagu selesai.
+            HANYA set flag — tidak pernah memanggil pygame.mixer atau AudioEngine
+            karena pygame audio calls HARUS dari main thread."""
+            if not PYGAME_AVAILABLE:
+                return
+            time.sleep(0.8)   # beri waktu play() pertama agar benar-benar mulai
+            while getattr(self, '_watcher_running', True):
+                if AudioEngine.is_paused:
+                    time.sleep(0.3)
+                    continue
+                if not pygame.mixer.music.get_busy():
+                    if not self._manual_skip:
+                        self._song_ended = True
+                    self._manual_skip = False
+                    # Tunggu sampai main thread memproses (play lagu baru)
+                    # sebelum mulai polling lagi
+                    time.sleep(1.0)
+                else:
+                    time.sleep(0.3)
+
+        self._watcher_running = True
+        threading.Thread(target=_watcher, daemon=True).start()
+
         if self.dll.current:
             self._play_current()
 
         while True:
+            # ── Main thread: proses flag lagu selesai (SATU-SATUNYA tempat
+            #    memanggil _play_current agar pygame dipanggil dari main thread)
+            if self._song_ended:
+                self._song_ended = False
+                if not self.repeat_mode:
+                    self.dll.next_song(self.shuffle_mode)
+                self._play_current()
+
             os.system("cls" if os.name == "nt" else "clear")
             curr = self.dll.current
             W = 54
@@ -413,13 +454,33 @@ class PlaylistCLI:
                 print(f"|{baris:<{W}}|")
             print(f"+{batas}+")
 
-            pilihan = input("Pilih Menu: ").strip()
+            # Jalankan input() di thread terpisah agar main thread tetap
+            # bisa mengecek _song_ended setiap 0.5 detik (non-blocking wait).
+            _hasil = [None]
+            def _baca_input():
+                try:
+                    _hasil[0] = input("Pilih Menu: ").strip()
+                except EOFError:
+                    _hasil[0] = ""
+            _t = threading.Thread(target=_baca_input, daemon=True)
+            _t.start()
+            while _hasil[0] is None:
+                # Proses flag lagu selesai sambil menunggu input user
+                if self._song_ended:
+                    self._song_ended = False
+                    if not self.repeat_mode:
+                        self.dll.next_song(self.shuffle_mode)
+                    self._play_current()
+                _t.join(timeout=0.5)
+            pilihan = _hasil[0]
 
             if pilihan == "1":
+                self._manual_skip = True
                 self.dll.next_song(self.shuffle_mode)
                 self._play_current()
 
             elif pilihan == "2":
+                self._manual_skip = True
                 self.dll.prev_song(self.shuffle_mode)
                 self._play_current()
 
@@ -447,6 +508,10 @@ class PlaylistCLI:
                 self.shuffle_mode = not self.shuffle_mode
                 if self.shuffle_mode:
                     self.dll.build_shuffle()
+                    print(f"\n[✓] Shuffle AKTIF — urutan putar diacak ({self.dll.size} lagu)")
+                else:
+                    print("\n[✗] Shuffle MATI — kembali ke urutan normal")
+                input("Tekan Enter...")
 
             elif pilihan == "9":
                 self._cli_volume()
@@ -458,9 +523,11 @@ class PlaylistCLI:
                 self._cli_sort()
 
             elif pilihan == "12":
+                self._watcher_running = False
                 return "GUI"
 
             elif pilihan == "13":
+                self._watcher_running = False
                 AudioEngine.stop()
                 DataManager.save_playlist(self.dll)
                 print("\nTerima kasih telah menggunakan DynaPlay! 🎵")
@@ -501,11 +568,20 @@ class PlaylistCLI:
         input("Tekan Enter...")
 
     def _cli_volume(self) -> None:
+        print(f"\n── Atur Volume ──────────────────")
+        print(f"  Volume saat ini : {int(AudioEngine._volume * 100)}%")
+        print(f"  Masukkan angka antara 0 hingga 100")
         try:
-            vol = float(input(f"Volume saat ini {int(AudioEngine._volume*100)}%. Masukkan nilai baru (0–100): "))
-            AudioEngine.set_volume(vol / 100)
+            raw = input("  Volume baru (0-100): ").strip()
+            vol = float(raw)
+            if vol < 0 or vol > 100:
+                print("[✗] Volume harus antara 0 sampai 100!")
+            else:
+                AudioEngine.set_volume(vol / 100)
+                vol_bar = "#" * int(AudioEngine._volume * 10)
+                print(f"[✓] Volume diatur ke {int(AudioEngine._volume * 100)}% [{vol_bar:<10}]")
         except ValueError:
-            print("[✗] Input tidak valid!")
+            print("[✗] Input tidak valid! Masukkan angka antara 0 sampai 100.")
         input("Tekan Enter...")
 
     def _cli_cari(self) -> None:
@@ -923,22 +999,25 @@ class PlaylistGUI:
     def _popup_insert(self) -> None:
         win = tk.Toplevel(self.root)
         win.title("Tambah Lagu Baru")
-        win.geometry("400x360")
+        win.geometry("400x380")
         win.configure(bg=C["surface"])
         win.resizable(False, False)
         win.grab_set()
 
-        fields = [
+        GENRE_OPTIONS = ["Pop", "Hip-Hop", "EDM", "R&B", "Jazz",
+                         "Rock", "Classic", "Country", "Traditional"]
+
+        # Field biasa (baris 0–4): Posisi, File/ID, Judul, Artis, Durasi
+        plain_fields = [
             ("Posisi:", str(self.dll.size + 1)),
             ("File / ID:", ""),
             ("Judul:", ""),
             ("Artis:", ""),
             ("Durasi (detik):", "0"),
-            ("Genre:", ""),
         ]
         entries: list[tk.Entry] = []
 
-        for i, (lbl, default) in enumerate(fields):
+        for i, (lbl, default) in enumerate(plain_fields):
             tk.Label(win, text=lbl, bg=C["surface"], fg=C["muted"],
                      font=("Segoe UI", 9, "bold"), width=16,
                      anchor="e").grid(row=i, column=0, padx=(14, 4), pady=7, sticky="e")
@@ -949,6 +1028,31 @@ class PlaylistGUI:
             ent.grid(row=i, column=1, padx=4, pady=7, sticky="ew")
             entries.append(ent)
         win.columnconfigure(1, weight=1)
+
+        # Baris 5 — Genre (Combobox dropdown)
+        tk.Label(win, text="Genre:", bg=C["surface"], fg=C["muted"],
+                 font=("Segoe UI", 9, "bold"), width=16,
+                 anchor="e").grid(row=5, column=0, padx=(14, 4), pady=7, sticky="e")
+
+        style = ttk.Style()
+        style.configure("Genre.TCombobox",
+                         fieldbackground=C["card"],
+                         background=C["card"],
+                         foreground=C["text"],
+                         selectbackground=C["accent"],
+                         selectforeground="black",
+                         arrowcolor=C["accent"])
+        style.map("Genre.TCombobox",
+                  fieldbackground=[("readonly", C["card"])],
+                  selectbackground=[("readonly", C["hover"])],
+                  foreground=[("readonly", C["text"])])
+
+        genre_var = tk.StringVar(value="Pop")
+        genre_cb = ttk.Combobox(win, textvariable=genre_var,
+                                values=GENRE_OPTIONS, state="readonly",
+                                font=("Segoe UI", 10), width=20,
+                                style="Genre.TCombobox")
+        genre_cb.grid(row=5, column=1, padx=4, pady=7, sticky="ew")
 
         def browse() -> None:
             path = filedialog.askopenfilename(
@@ -980,8 +1084,9 @@ class PlaylistGUI:
                 if not sid:
                     messagebox.showerror("Error", "Nama file tidak boleh kosong!", parent=win)
                     return
+                genre_val = genre_var.get()
                 node = Node(sid, entries[2].get(), entries[3].get(),
-                            int(entries[4].get() or 0), entries[5].get())
+                            int(entries[4].get() or 0), genre_val)
                 if self.dll.insert_at(pos, node):
                     DataManager.save_playlist(self.dll)
                     if self.dll.size == 1:
