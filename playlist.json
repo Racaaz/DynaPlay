@@ -1,11 +1,19 @@
 [
     {
-        "id": "SONG-006.mp3",
-        "judul": "SAYA AKAN LAWAN",
-        "artis": "JKW",
-        "durasi": 17,
-        "genre": "Comedy",
-        "play_count": 15
+        "id": "SONG-004.mp3",
+        "judul": "One of The Girls",
+        "artis": "The Weeknd",
+        "durasi": 258,
+        "genre": "Pop",
+        "play_count": 2
+    },
+    {
+        "id": "SONG-003.mp3",
+        "judul": "It Will Rain",
+        "artis": "Bruno Mars",
+        "durasi": 266,
+        "genre": "Pop",
+        "play_count": 0
     },
     {
         "id": "SONG-007.mp3",
@@ -13,15 +21,7 @@
         "artis": "Chinese",
         "durasi": 17,
         "genre": "pop",
-        "play_count": 15
-    },
-    {
-        "id": "0014.mp3",
-        "judul": "Despacito",
-        "artis": "Justin Bieber",
-        "durasi": 230,
-        "genre": ".",
-        "play_count": 11
+        "play_count": 26
     },
     {
         "id": "SONG-002.mp3",
@@ -29,7 +29,7 @@
         "artis": "Bruno Mars",
         "durasi": 227,
         "genre": "Romance",
-        "play_count": 41
+        "play_count": 46
     },
     {
         "id": "SONG-005.mp3",
@@ -37,7 +37,7 @@
         "artis": "Bruno Mars",
         "durasi": 336,
         "genre": "Pop",
-        "play_count": 45
+        "play_count": 46
     },
     {
         "id": "SONG-001.mp3",
@@ -45,14 +45,6 @@
         "artis": "Backstreet Boys",
         "durasi": 228,
         "genre": "Romance",
-        "play_count": 56
-    },
-    {
-        "id": "0019.mp3",
-        "judul": "Confident",
-        "artis": "Justin Bieber",
-        "durasi": 365,
-        "genre": "Pop",
-        "play_count": 4
+        "play_count": 61
     }
 ]
